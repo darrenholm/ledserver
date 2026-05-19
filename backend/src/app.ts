@@ -20,7 +20,9 @@ const FRONTEND_DIST = path.join(process.cwd(), 'public');
 
 export function createApp(): express.Express {
   const app = express();
-  app.set('trust proxy', true);
+  // Railway sits one proxy hop in front of us. Trust exactly that hop so X-Forwarded-For
+  // reflects the real client IP but can't be spoofed past Railway's edge.
+  app.set('trust proxy', 1);
   app.use(
     helmet({
       // SPA + inline scripts from Vite would need a tailored CSP; disable for now.

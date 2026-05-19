@@ -1,13 +1,34 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { devices as devicesApi } from '../api/endpoints';
-import type { Device } from '../types';
+import { useAuth } from '../auth';
+import type { Device, DeviceProvider } from '../types';
+
+interface FormState {
+  name: string;
+  provider: DeviceProvider;
+  deviceKey: string;
+  ipAddress: string;
+  port: number;
+  location: string;
+}
+
+const EMPTY_FORM: FormState = {
+  name: '',
+  provider: 'vnnox',
+  deviceKey: '',
+  ipAddress: '',
+  port: 5000,
+  location: '',
+};
 
 export default function Devices() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
   const [list, setList] = useState<Device[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', deviceKey: '', ipAddress: '', port: 5000, location: '' });
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
   const refresh = () =>
     devicesApi
@@ -24,18 +45,22 @@ export default function Devices() {
     try {
       await devicesApi.create({
         name: form.name,
+        provider: form.provider,
         deviceKey: form.deviceKey,
-        ipAddress: form.ipAddress,
-        port: form.port,
+        ipAddress: form.provider === 'lan_direct' ? form.ipAddress : undefined,
+        port: form.provider === 'lan_direct' ? form.port : undefined,
         location: form.location || undefined,
       } as any);
       setShowForm(false);
-      setForm({ name: '', deviceKey: '', ipAddress: '', port: 5000, location: '' });
+      setForm(EMPTY_FORM);
       refresh();
     } catch (e) {
       setErr((e as Error).message);
     }
   };
+
+  const providerLabel = (p: DeviceProvider) =>
+    p === 'vnnox' ? 'VNNOX Cloud' : p === 'lan_direct' ? 'LAN direct' : 'Mock';
 
   return (
     <div className="stack">
@@ -61,31 +86,60 @@ export default function Devices() {
             </div>
           </div>
           <div className="row" style={{ gap: 12 }}>
-            <div style={{ flex: 2 }}>
-              <label>IP address</label>
-              <input
-                value={form.ipAddress}
-                onChange={(e) => setForm({ ...form, ipAddress: e.target.value })}
-                placeholder="192.168.1.100"
-                required
-              />
-            </div>
             <div style={{ flex: 1 }}>
-              <label>Port</label>
-              <input
-                type="number"
-                value={form.port}
-                onChange={(e) => setForm({ ...form, port: parseInt(e.target.value, 10) || 5000 })}
-              />
+              <label>Provider</label>
+              <select
+                value={form.provider}
+                onChange={(e) => setForm({ ...form, provider: e.target.value as DeviceProvider })}
+              >
+                <option value="vnnox">VNNOX Cloud (recommended)</option>
+                {isSuperAdmin && <option value="lan_direct">LAN direct (in-shop diagnostics)</option>}
+              </select>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                {form.provider === 'vnnox'
+                  ? 'Controls the device via NovaStar’s cloud API. Use this for customer screens.'
+                  : 'Direct LAN connection on port 5200. Diagnostics only — requires same-LAN reachability.'}
+              </div>
             </div>
+            {form.provider === 'lan_direct' && (
+              <>
+                <div style={{ flex: 2 }}>
+                  <label>IP address</label>
+                  <input
+                    value={form.ipAddress}
+                    onChange={(e) => setForm({ ...form, ipAddress: e.target.value })}
+                    placeholder="10.10.1.173"
+                    required
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Port</label>
+                  <input
+                    type="number"
+                    value={form.port}
+                    onChange={(e) => setForm({ ...form, port: parseInt(e.target.value, 10) || 5200 })}
+                  />
+                </div>
+              </>
+            )}
           </div>
           <div>
-            <label>Device key (from QR sticker)</label>
+            <label>
+              {form.provider === 'vnnox'
+                ? 'Device serial number (SN)'
+                : 'Device key (from QR sticker)'}
+            </label>
             <input
               value={form.deviceKey}
               onChange={(e) => setForm({ ...form, deviceKey: e.target.value })}
+              placeholder={form.provider === 'vnnox' ? '2YHA23504W4A10034783-00' : ''}
               required
             />
+            {form.provider === 'vnnox' && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                The SN as listed in VNNOX (Screen list). Often printed on the controller label too.
+              </div>
+            )}
           </div>
           <button type="submit">Register</button>
         </form>
@@ -96,7 +150,8 @@ export default function Devices() {
           <thead>
             <tr>
               <th>Name</th>
-              <th>IP</th>
+              <th>Provider</th>
+              <th>SN / Key</th>
               <th>Status</th>
               <th>Location</th>
               <th>Last seen</th>
@@ -110,7 +165,8 @@ export default function Devices() {
                   <Link to={`/devices/${d.id}`}>{d.name}</Link>
                   <div className="muted" style={{ fontSize: 12 }}>{d.model ?? '—'}</div>
                 </td>
-                <td>{d.ip_address}:{d.port}</td>
+                <td>{providerLabel(d.provider)}</td>
+                <td><code style={{ fontSize: 12 }}>{d.device_key}</code></td>
                 <td>
                   <span className={`pill ${d.online ? 'online' : 'offline'}`}>
                     {d.online ? 'online' : 'offline'}
@@ -127,7 +183,7 @@ export default function Devices() {
             ))}
             {list.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                   No devices registered yet.
                 </td>
               </tr>

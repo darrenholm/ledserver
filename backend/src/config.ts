@@ -101,6 +101,14 @@ export const config = {
     retries: int('COEX_RETRIES', 2),
   },
 
+  vnnox: {
+    // Region: us | eu | au | in (matches NovaStar's open-<region>.vnnox.com naming)
+    region: (process.env.VNNOX_REGION ?? 'us') as 'us' | 'eu' | 'au' | 'in',
+    appKey: process.env.VNNOX_APP_KEY ?? '',
+    appSecret: process.env.VNNOX_APP_SECRET ?? '',
+    timeoutMs: int('VNNOX_TIMEOUT_MS', 10_000),
+  },
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

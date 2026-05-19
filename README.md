@@ -75,6 +75,20 @@ led.holmgraphics.ca/files/*  →  media (served from /app/media volume)
 
 Taurus controllers HTTP-pull media from `https://led.holmgraphics.ca/files/uploads/<file>`. They must be configured to phone home (outbound) to the server — direct inbound LAN access from Railway is not possible.
 
+## Device protocol providers
+
+Each registered device picks a transport via its `provider` column:
+
+| Provider | When to use | Identifier (`device_key`) |
+|---|---|---|
+| `vnnox` (default) | All customer devices. Talks to [NovaStar's NovaCloud Open Platform](https://developer-en.vnnox.com/) API. Works from any cloud host. | Device SN as listed in VNNOX |
+| `lan_direct` | In-shop diagnostics only. Direct TCP to port 5200. Requires same-LAN reachability. Most operations stubbed (wire protocol still being decoded). | Any local key |
+| `mock` | Tests | n/a |
+
+**To use `vnnox` provider** you need to set `VNNOX_APP_KEY` and `VNNOX_APP_SECRET` (see Variables in the Railway section below). Get them at [developer-en.vnnox.com](https://developer-en.vnnox.com/) — log in with your VNNOX account, create an application, copy the credentials.
+
+Customers never need their own VNNOX credentials. Holm Graphics holds one server-side credential that controls every customer's devices on their behalf; the multi-tenant separation is enforced by our `organizations` model, not by NovaStar's sub-user model.
+
 ### Step-by-step
 
 1. **Create Railway project** at https://railway.app/new from the GitHub repo.
@@ -96,7 +110,11 @@ Taurus controllers HTTP-pull media from `https://led.holmgraphics.ca/files/uploa
      ADMIN_PASSWORD=<strong unique password>
      DATABASE_URL=${{Postgres.DATABASE_URL}}
      MEDIA_PUBLIC_BASE_URL=https://led.holmgraphics.ca/files
-     COEX_DEFAULT_PORT=5000
+
+     # VNNOX Cloud (NovaCloud Open Platform) — required for provider=vnnox devices
+     VNNOX_REGION=us
+     VNNOX_APP_KEY=<from developer-en.vnnox.com>
+     VNNOX_APP_SECRET=<from developer-en.vnnox.com>
      ```
      Skip `CORS_ALLOWED_ORIGINS` and `IP_WHITELIST` — same-origin deploy doesn't need CORS, and rate-limiting + auth handle access.
 

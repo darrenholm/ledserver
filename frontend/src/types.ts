@@ -8,13 +8,16 @@ export interface Organization {
   updated_at: string;
 }
 
+export type DeviceProvider = 'vnnox' | 'lan_direct' | 'mock';
+
 export interface Device {
   id: string;
   organization_id: string;
+  provider: DeviceProvider;
   name: string;
   model: string | null;
   device_key: string;
-  ip_address: string;
+  ip_address: string | null;
   port: number;
   location: string | null;
   width_px: number | null;

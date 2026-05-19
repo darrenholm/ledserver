@@ -178,7 +178,8 @@ interface DeployRow {
   duration_ms: number;
   checksum_sha256: string | null;
   d_org_id: string;
-  ip_address: string;
+  d_provider: 'vnnox' | 'lan_direct' | 'mock';
+  ip_address: string | null;
   port: number;
   device_key: string;
 }
@@ -198,6 +199,7 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
         pi.duration_ms,
         m.checksum_sha256,
         d.organization_id AS d_org_id,
+        d.provider AS d_provider,
         d.ip_address,
         d.port,
         d.device_key
@@ -232,9 +234,10 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
   };
   const client = coexRegistry.get({
     id: deviceId,
-    ipAddress: first.ip_address,
-    port: first.port,
+    provider: first.d_provider,
     deviceKey: first.device_key,
+    ipAddress: first.ip_address ?? undefined,
+    port: first.port,
   });
   await client.pushPlaylist(manifest);
   await client.play(manifest.playlistId);

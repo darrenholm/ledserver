@@ -1,14 +1,42 @@
-import { HttpCoexClient } from './httpClient';
+import { LanDirectClient } from './lanDirectClient';
 import { CoexTransport } from './types';
+import { VnnoxCloudClient } from './vnnoxClient';
+
+export type DeviceProvider = 'vnnox' | 'lan_direct' | 'mock';
 
 export interface DeviceConnInfo {
   id: string;
-  ipAddress: string;
-  port: number;
+  provider: DeviceProvider;
+  /**
+   * For vnnox: the device SN. For lan_direct: any local identifier.
+   * Stored in the devices.device_key column.
+   */
   deviceKey: string;
+  /** For lan_direct only — LAN address of the controller. */
+  ipAddress?: string;
+  /** For lan_direct only — port (default 5200). */
+  port?: number;
 }
 
 type Factory = (d: DeviceConnInfo) => CoexTransport;
+
+const defaultFactory: Factory = (d) => {
+  switch (d.provider) {
+    case 'vnnox':
+      return new VnnoxCloudClient({ sn: d.deviceKey });
+    case 'lan_direct':
+      if (!d.ipAddress) throw new Error('lan_direct device is missing ipAddress');
+      return new LanDirectClient({ host: d.ipAddress, port: d.port, deviceKey: d.deviceKey });
+    case 'mock': {
+      // Lazy require so tests don't pull in network deps unnecessarily.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { MockCoexController } = require('./mock');
+      return new MockCoexController();
+    }
+    default:
+      throw new Error(`unknown device provider: ${(d as DeviceConnInfo).provider}`);
+  }
+};
 
 /**
  * Per-process registry of CoexTransport instances, keyed by device id.
@@ -17,7 +45,7 @@ type Factory = (d: DeviceConnInfo) => CoexTransport;
 export class CoexRegistry {
   private clients = new Map<string, CoexTransport>();
 
-  constructor(private factory: Factory = (d) => new HttpCoexClient({ host: d.ipAddress, port: d.port, deviceKey: d.deviceKey })) {}
+  constructor(private factory: Factory = defaultFactory) {}
 
   get(device: DeviceConnInfo): CoexTransport {
     let c = this.clients.get(device.id);

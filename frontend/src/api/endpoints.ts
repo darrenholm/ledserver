@@ -5,12 +5,24 @@ import type {
   LogEntry,
   LoginResponse,
   Media,
+  Organization,
   Playlist,
+  SignupResponse,
 } from '../types';
 
 export const auth = {
   login: (username: string, password: string) =>
     api<LoginResponse>('/auth/login', { body: { username, password } }),
+  signup: (organizationName: string, username: string, password: string) =>
+    api<SignupResponse>('/auth/signup', { body: { organizationName, username, password } }),
+};
+
+export const organizations = {
+  list: () => api<Organization[]>('/organizations'),
+  me: () => api<Organization>('/organizations/me'),
+  update: (id: string, data: { name?: string }) =>
+    api<Organization>(`/organizations/${id}`, { method: 'PATCH', body: data }),
+  remove: (id: string) => api<void>(`/organizations/${id}`, { method: 'DELETE' }),
 };
 
 export const devices = {

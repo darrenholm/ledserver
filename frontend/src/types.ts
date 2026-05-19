@@ -1,5 +1,16 @@
+export type Role = 'super_admin' | 'org_admin' | 'org_operator' | 'org_viewer';
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Device {
   id: string;
+  organization_id: string;
   name: string;
   model: string | null;
   device_key: string;
@@ -26,6 +37,7 @@ export interface DeviceStatus {
 
 export interface Media {
   id: string;
+  organization_id: string;
   filename: string;
   original_name: string;
   mime_type: string;
@@ -37,6 +49,7 @@ export interface Media {
 
 export interface Playlist {
   id: string;
+  organization_id: string;
   name: string;
   description: string | null;
   loop: boolean;
@@ -60,6 +73,7 @@ export interface LogEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   source: string;
   device_id: string | null;
+  organization_id: string | null;
   message: string;
   details: Record<string, unknown> | null;
 }
@@ -67,10 +81,15 @@ export interface LogEntry {
 export interface AuthUser {
   id: string;
   username: string;
-  role: 'admin' | 'operator' | 'viewer';
+  role: Role;
+  organizationId: string | null;
 }
 
 export interface LoginResponse {
   token: string;
   user: AuthUser;
+}
+
+export interface SignupResponse extends LoginResponse {
+  organization: Organization;
 }

@@ -5,7 +5,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { query } from '../db';
-import { authRequired, requireRole } from '../middleware/auth';
+import { authRequired, requireOrgRole } from '../middleware/auth';
+import { orgClause, orgForInsert } from '../services/scope';
 import { config } from '../config';
 
 const router = Router();
@@ -25,7 +26,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  limits: { fileSize: 500 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = /^(image|video|audio)\//;
     if (!allowed.test(file.mimetype)) {
@@ -38,6 +39,7 @@ const upload = multer({
 
 interface MediaRow {
   id: string;
+  organization_id: string;
   filename: string;
   original_name: string;
   mime_type: string;
@@ -51,13 +53,21 @@ interface MediaRow {
   created_at: string;
 }
 
-router.get('/', async (_req, res) => {
-  const { rows } = await query<MediaRow>(`SELECT * FROM media ORDER BY created_at DESC`);
+router.get('/', async (req, res) => {
+  const { clause, params } = orgClause(req, 'organization_id', 1);
+  const { rows } = await query<MediaRow>(
+    `SELECT * FROM media WHERE 1=1 ${clause} ORDER BY created_at DESC`,
+    params,
+  );
   res.json(rows);
 });
 
 router.get('/:id', async (req, res) => {
-  const { rows } = await query<MediaRow>(`SELECT * FROM media WHERE id = $1`, [req.params.id]);
+  const { clause, params } = orgClause(req, 'organization_id', 2);
+  const { rows } = await query<MediaRow>(
+    `SELECT * FROM media WHERE id = $1 ${clause}`,
+    [req.params.id, ...params],
+  );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -75,23 +85,28 @@ function sha256File(filepath: string): Promise<string> {
   });
 }
 
-router.post('/', requireRole('admin', 'operator'), upload.single('file'), async (req, res) => {
+router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('file'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'no file uploaded' });
     return;
   }
+  const orgId = orgForInsert(req);
   const checksum = await sha256File(req.file.path);
   const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${req.file.filename}`;
   const { rows } = await query<MediaRow>(
-    `INSERT INTO media (filename, original_name, mime_type, size_bytes, checksum_sha256, storage_url)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, checksum, publicUrl],
+    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes, checksum_sha256, storage_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [orgId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, checksum, publicUrl],
   );
   res.status(201).json(rows[0]);
 });
 
-router.delete('/:id', requireRole('admin'), async (req, res) => {
-  const { rows } = await query<MediaRow>(`SELECT * FROM media WHERE id = $1`, [req.params.id]);
+router.delete('/:id', requireOrgRole('org_admin'), async (req, res) => {
+  const { clause, params } = orgClause(req, 'organization_id', 2);
+  const { rows } = await query<MediaRow>(
+    `SELECT * FROM media WHERE id = $1 ${clause}`,
+    [req.params.id, ...params],
+  );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -110,7 +125,7 @@ const updateSchema = z.object({
   heightPx: z.number().int().positive().optional(),
 });
 
-router.patch('/:id', requireRole('admin', 'operator'), async (req, res) => {
+router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const data = updateSchema.parse(req.body);
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -124,9 +139,12 @@ router.patch('/:id', requireRole('admin', 'operator'), async (req, res) => {
     return;
   }
   values.push(req.params.id);
+  const idIdx = i;
+  i++;
+  const { clause, params: scopeParams } = orgClause(req, 'organization_id', i);
   const { rows } = await query<MediaRow>(
-    `UPDATE media SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
-    values,
+    `UPDATE media SET ${fields.join(', ')} WHERE id = $${idIdx} ${clause} RETURNING *`,
+    [...values, ...scopeParams],
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });

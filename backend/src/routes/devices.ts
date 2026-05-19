@@ -1,15 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db';
-import { authRequired, requireRole } from '../middleware/auth';
+import { authRequired, requireOrgRole } from '../middleware/auth';
 import { coexRegistry } from '../coex/registry';
 import { writeLog } from '../services/logs';
+import { orgClause, orgForInsert } from '../services/scope';
 
 const router = Router();
 router.use(authRequired);
 
 interface DeviceRow {
   id: string;
+  organization_id: string;
   name: string;
   model: string | null;
   device_key: string;
@@ -40,13 +42,21 @@ const createSchema = z.object({
 
 const updateSchema = createSchema.partial();
 
-router.get('/', async (_req, res) => {
-  const { rows } = await query<DeviceRow>(`SELECT * FROM devices ORDER BY created_at DESC`);
+router.get('/', async (req, res) => {
+  const { clause, params } = orgClause(req, 'organization_id', 1);
+  const { rows } = await query<DeviceRow>(
+    `SELECT * FROM devices WHERE 1=1 ${clause} ORDER BY created_at DESC`,
+    params,
+  );
   res.json(rows);
 });
 
 router.get('/:id', async (req, res) => {
-  const { rows } = await query<DeviceRow>(`SELECT * FROM devices WHERE id = $1`, [req.params.id]);
+  const { clause, params } = orgClause(req, 'organization_id', 2);
+  const { rows } = await query<DeviceRow>(
+    `SELECT * FROM devices WHERE id = $1 ${clause}`,
+    [req.params.id, ...params],
+  );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -54,13 +64,15 @@ router.get('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-router.post('/', requireRole('admin', 'operator'), async (req, res) => {
+router.post('/', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const data = createSchema.parse(req.body);
+  const orgId = orgForInsert(req);
   const { rows } = await query<DeviceRow>(
-    `INSERT INTO devices (name, model, device_key, ip_address, port, location, width_px, height_px, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, '{}'::jsonb))
+    `INSERT INTO devices (organization_id, name, model, device_key, ip_address, port, location, width_px, height_px, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb))
      RETURNING *`,
     [
+      orgId,
       data.name,
       data.model ?? null,
       data.deviceKey,
@@ -72,11 +84,11 @@ router.post('/', requireRole('admin', 'operator'), async (req, res) => {
       data.metadata ?? null,
     ],
   );
-  await writeLog('info', 'api', `device registered: ${data.name}`, rows[0].id, { ipAddress: data.ipAddress });
+  await writeLog('info', 'api', `device registered: ${data.name}`, rows[0].id, { ipAddress: data.ipAddress }, orgId);
   res.status(201).json(rows[0]);
 });
 
-router.patch('/:id', requireRole('admin', 'operator'), async (req, res) => {
+router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const data = updateSchema.parse(req.body);
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -104,9 +116,12 @@ router.patch('/:id', requireRole('admin', 'operator'), async (req, res) => {
   }
   fields.push(`updated_at = NOW()`);
   values.push(req.params.id);
+  const idIdx = i;
+  i++;
+  const { clause, params: scopeParams } = orgClause(req, 'organization_id', i);
   const { rows } = await query<DeviceRow>(
-    `UPDATE devices SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
-    values,
+    `UPDATE devices SET ${fields.join(', ')} WHERE id = $${idIdx} ${clause} RETURNING *`,
+    [...values, ...scopeParams],
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });
@@ -115,9 +130,10 @@ router.patch('/:id', requireRole('admin', 'operator'), async (req, res) => {
   res.json(rows[0]);
 });
 
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', requireOrgRole('org_admin'), async (req, res) => {
   await coexRegistry.drop(req.params.id);
-  const { rowCount } = await query(`DELETE FROM devices WHERE id = $1`, [req.params.id]);
+  const { clause, params } = orgClause(req, 'organization_id', 2);
+  const { rowCount } = await query(`DELETE FROM devices WHERE id = $1 ${clause}`, [req.params.id, ...params]);
   if (rowCount === 0) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -125,15 +141,24 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
   res.status(204).end();
 });
 
-// --- COEX actions ---
+// --- COEX actions: org-scoped lookup, then bounce to the device ---
 
-async function loadDevice(id: string) {
-  const { rows } = await query<DeviceRow>(`SELECT * FROM devices WHERE id = $1`, [id]);
-  return rows[0];
+import type { Request } from 'express';
+async function loadDevice(req: Request): Promise<DeviceRow | null> {
+  const scope = req.orgScope;
+  if (scope) {
+    const { rows } = await query<DeviceRow>(
+      `SELECT * FROM devices WHERE id = $1 AND organization_id = $2`,
+      [req.params.id, scope],
+    );
+    return rows[0] ?? null;
+  }
+  const { rows } = await query<DeviceRow>(`SELECT * FROM devices WHERE id = $1`, [req.params.id]);
+  return rows[0] ?? null;
 }
 
-router.post('/:id/ping', requireRole('admin', 'operator'), async (req, res) => {
-  const device = await loadDevice(req.params.id);
+router.post('/:id/ping', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
   if (!device) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -153,7 +178,7 @@ router.post('/:id/ping', requireRole('admin', 'operator'), async (req, res) => {
 });
 
 router.get('/:id/status', async (req, res) => {
-  const device = await loadDevice(req.params.id);
+  const device = await loadDevice(req);
   if (!device) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -173,9 +198,9 @@ router.get('/:id/status', async (req, res) => {
 });
 
 const brightnessSchema = z.object({ brightness: z.number().int().min(0).max(100) });
-router.post('/:id/brightness', requireRole('admin', 'operator'), async (req, res) => {
+router.post('/:id/brightness', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const { brightness } = brightnessSchema.parse(req.body);
-  const device = await loadDevice(req.params.id);
+  const device = await loadDevice(req);
   if (!device) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -187,12 +212,12 @@ router.post('/:id/brightness', requireRole('admin', 'operator'), async (req, res
     deviceKey: device.device_key,
   });
   await client.setBrightness(brightness);
-  await writeLog('info', 'api', `brightness set to ${brightness}`, device.id);
+  await writeLog('info', 'api', `brightness set to ${brightness}`, device.id, undefined, device.organization_id);
   res.json({ ok: true });
 });
 
-router.post('/:id/reboot', requireRole('admin'), async (req, res) => {
-  const device = await loadDevice(req.params.id);
+router.post('/:id/reboot', requireOrgRole('org_admin'), async (req, res) => {
+  const device = await loadDevice(req);
   if (!device) {
     res.status(404).json({ error: 'not found' });
     return;
@@ -204,12 +229,12 @@ router.post('/:id/reboot', requireRole('admin'), async (req, res) => {
     deviceKey: device.device_key,
   });
   await client.reboot();
-  await writeLog('warn', 'api', `device reboot triggered`, device.id);
+  await writeLog('warn', 'api', `device reboot triggered`, device.id, undefined, device.organization_id);
   res.json({ ok: true });
 });
 
-router.post('/:id/stop', requireRole('admin', 'operator'), async (req, res) => {
-  const device = await loadDevice(req.params.id);
+router.post('/:id/stop', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
   if (!device) {
     res.status(404).json({ error: 'not found' });
     return;

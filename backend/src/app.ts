@@ -12,6 +12,7 @@ import devicesRouter from './routes/devices';
 import playlistsRouter from './routes/playlists';
 import mediaRouter from './routes/media';
 import logsRouter from './routes/logs';
+import orgsRouter from './routes/organizations';
 
 const MEDIA_FILES_DIR = path.join(process.cwd(), 'media', 'uploads');
 // The frontend build is copied here by the Dockerfile; absent in local dev.
@@ -44,6 +45,7 @@ export function createApp(): express.Express {
   // --- API routes (mounted under /api) ---
   const api = express.Router();
   api.use('/auth', authRouter);
+  api.use('/organizations', orgsRouter);
   api.use('/devices', devicesRouter);
   api.use('/playlists', playlistsRouter);
   api.use('/media', mediaRouter);

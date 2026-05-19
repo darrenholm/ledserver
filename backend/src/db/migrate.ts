@@ -37,14 +37,15 @@ async function applyMigration(version: string, sql: string) {
 }
 
 async function seedAdmin() {
+  // Seed a super_admin (org_id NULL) if no users exist at all.
   const { rows } = await query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM users`);
   if (parseInt(rows[0].count, 10) > 0) return;
   const hash = await bcrypt.hash(config.admin.password, 10);
-  await query(`INSERT INTO users (username, password_hash, role) VALUES ($1, $2, 'admin')`, [
-    config.admin.username,
-    hash,
-  ]);
-  console.log(`seeded admin user "${config.admin.username}"`);
+  await query(
+    `INSERT INTO users (username, password_hash, role, organization_id) VALUES ($1, $2, 'super_admin', NULL)`,
+    [config.admin.username, hash],
+  );
+  console.log(`seeded super_admin user "${config.admin.username}"`);
 }
 
 async function main() {

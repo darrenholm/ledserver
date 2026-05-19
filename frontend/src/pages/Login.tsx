@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 
 export default function Login() {
@@ -55,6 +55,9 @@ export default function Login() {
           <button type="submit" disabled={busy}>
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
+          <div className="muted" style={{ textAlign: 'center', fontSize: 13 }}>
+            No account yet? <Link to="/signup">Create one</Link>
+          </div>
         </div>
       </form>
     </div>

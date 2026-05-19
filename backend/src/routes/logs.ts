@@ -21,6 +21,7 @@ router.get('/', async (req, res) => {
   if (params.deviceId) { filters.push(`device_id = $${i++}`); values.push(params.deviceId); }
   if (params.level) { filters.push(`level = $${i++}`); values.push(params.level); }
   if (params.before) { filters.push(`ts < $${i++}`); values.push(params.before); }
+  if (req.orgScope) { filters.push(`organization_id = $${i++}`); values.push(req.orgScope); }
   const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
   values.push(params.limit);
   const { rows } = await query(

@@ -2,6 +2,7 @@ import express from 'express';
 import 'express-async-errors';
 import cors from 'cors';
 import helmet from 'helmet';
+import fs from 'fs';
 import path from 'path';
 import { ipWhitelist } from './middleware/ipWhitelist';
 import { errorHandler } from './middleware/errorHandler';
@@ -13,13 +14,15 @@ import mediaRouter from './routes/media';
 import logsRouter from './routes/logs';
 
 const MEDIA_FILES_DIR = path.join(process.cwd(), 'media', 'uploads');
+// The frontend build is copied here by the Dockerfile; absent in local dev.
+const FRONTEND_DIST = path.join(process.cwd(), 'public');
 
 export function createApp(): express.Express {
   const app = express();
   app.set('trust proxy', true);
   app.use(
     helmet({
-      // /files static responses don't need a CSP and we set our own headers via Caddy.
+      // SPA + inline scripts from Vite would need a tailored CSP; disable for now.
       contentSecurityPolicy: false,
     }),
   );
@@ -38,9 +41,16 @@ export function createApp(): express.Express {
     res.json({ status: 'ok', ts: new Date().toISOString() });
   });
 
-  // Static media: Taurus controllers HTTP-pull from this path.
-  // In docker-compose dev, nginx serves /media/uploads/* and this route is unused.
-  // On Railway, the API itself serves files from a mounted volume.
+  // --- API routes (mounted under /api) ---
+  const api = express.Router();
+  api.use('/auth', authRouter);
+  api.use('/devices', devicesRouter);
+  api.use('/playlists', playlistsRouter);
+  api.use('/media', mediaRouter);
+  api.use('/logs', logsRouter);
+  app.use('/api', api);
+
+  // --- Public media (Taurus controllers HTTP-pull from here) ---
   app.use(
     '/files/uploads',
     express.static(MEDIA_FILES_DIR, {
@@ -49,11 +59,14 @@ export function createApp(): express.Express {
     }),
   );
 
-  app.use('/auth', authRouter);
-  app.use('/devices', devicesRouter);
-  app.use('/playlists', playlistsRouter);
-  app.use('/media', mediaRouter);
-  app.use('/logs', logsRouter);
+  // --- Frontend SPA (only if bundled into the image) ---
+  if (fs.existsSync(FRONTEND_DIST)) {
+    app.use(express.static(FRONTEND_DIST, { maxAge: '1h', index: false }));
+    // SPA fallback: any non-API GET that doesn't match a file → index.html
+    app.get(/^\/(?!api\/|files\/|health$).*/, (_req, res) => {
+      res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+    });
+  }
 
   app.use(errorHandler);
   return app;

@@ -60,65 +60,55 @@ Tests use an in-process `MockCoexController` instead of real hardware.
 
 ## Production deploy — Railway (recommended)
 
-The repo is structured for a 3-service Railway project: backend API, frontend, and managed Postgres. Railway handles TLS, custom domains, and persistent volumes.
+Single Railway service serves both the API and the frontend behind one domain. The root `Dockerfile` builds the Vite frontend, builds the Express backend, and combines them into one image. Express serves the frontend at `/`, the API at `/api/*`, and media at `/files/*`.
 
 ### Architecture on Railway
 
 ```
-led.holmgraphics.ca         →  frontend service  (nginx serving SPA)
-api.led.holmgraphics.ca     →  backend service   (Express + media static)
+led.holmgraphics.ca/         →  frontend (Vite SPA)
+led.holmgraphics.ca/api/*    →  backend (Express)
+led.holmgraphics.ca/files/*  →  media (served from /app/media volume)
                                  │
                                  ├─ volume:  /app/media   (uploaded files)
                                  └─ plugin:  Postgres     (managed)
 ```
 
-Taurus controllers HTTP-pull media from `https://api.led.holmgraphics.ca/files/uploads/<file>`. They must be configured to phone home (outbound) to the API — direct inbound LAN access from Railway is not possible.
+Taurus controllers HTTP-pull media from `https://led.holmgraphics.ca/files/uploads/<file>`. They must be configured to phone home (outbound) to the server — direct inbound LAN access from Railway is not possible.
 
 ### Step-by-step
 
 1. **Create Railway project** at https://railway.app/new from the GitHub repo.
 
-2. **Add a Postgres plugin** to the project (Railway dashboard → New → Database → PostgreSQL). It auto-provisions a `DATABASE_URL` variable.
+2. **Add a Postgres plugin** to the project (Railway dashboard → New → Database → PostgreSQL).
 
-3. **Create the backend service** from the repo's `/backend` directory.
-   - Root directory: `backend`
-   - Build: Dockerfile (Railway auto-detects)
-   - **Variables (set these):**
+3. **Configure the service:**
+   - **Settings → Source → Root Directory:** `/` (repo root — the root `Dockerfile` builds both apps)
+   - **Settings → Build → Builder:** Dockerfile
+   - **Settings → Deploy → Healthcheck path:** `/health` (auto-set from `railway.json`)
+   - **Volume:** mount at `/app/media` (persists uploaded files)
+   - **Variables:**
      ```
      NODE_ENV=production
-     JWT_SECRET=<openssl rand -base64 48>
+     PORT=4000
+     JWT_SECRET=<node -e "console.log(require('crypto').randomBytes(48).toString('base64'))">
      JWT_EXPIRES_IN=12h
      ADMIN_USERNAME=admin
      ADMIN_PASSWORD=<strong unique password>
-     DATABASE_URL=${{Postgres.DATABASE_URL}}        # reference the Postgres plugin
-     MEDIA_PUBLIC_BASE_URL=https://api.led.holmgraphics.ca/files
-     CORS_ALLOWED_ORIGINS=https://led.holmgraphics.ca
+     DATABASE_URL=${{Postgres.DATABASE_URL}}
+     MEDIA_PUBLIC_BASE_URL=https://led.holmgraphics.ca/files
      COEX_DEFAULT_PORT=5000
-     IP_WHITELIST=                                  # empty = open; restrict via app auth
      ```
-   - **Volume:** add a volume mounted at `/app/media` (persists uploaded files).
-   - **Custom domain:** `api.led.holmgraphics.ca` — Railway will give you a CNAME target.
+     Skip `CORS_ALLOWED_ORIGINS` and `IP_WHITELIST` — same-origin deploy doesn't need CORS, and rate-limiting + auth handle access.
 
-4. **Create the frontend service** from `/frontend`.
-   - Root directory: `frontend`
-   - Build: Dockerfile
-   - **Build-time variable** (build arg `VITE_API_BASE_URL`): `https://api.led.holmgraphics.ca`
-   - **Custom domain:** `led.holmgraphics.ca`
+4. **Custom domain:** `led.holmgraphics.ca` — Railway gives you a CNAME + TXT pair.
 
-5. **DNS** — at your DNS provider (cPanel Zone Editor on swhc.ca, Cloudflare, etc.):
+5. **DNS** — at your DNS provider (cPanel Zone Editor for `holmgraphics.ca`):
    ```
-   led.holmgraphics.ca       CNAME   <railway-frontend-cname>
-   api.led.holmgraphics.ca   CNAME   <railway-backend-cname>
+   led       CNAME   <railway-cname-target>
+   _railway-verify.led   TXT   <railway-verify-string>
    ```
 
-6. **First deploy** runs migrations and seeds the admin user. Watch the backend service logs.
-
-### Why these settings
-
-- `DATABASE_URL` is auto-injected when you wire the Postgres plugin into the service.
-- `MEDIA_PUBLIC_BASE_URL` is the URL Taurus controllers will use to fetch media files.
-- `CORS_ALLOWED_ORIGINS` restricts who can call the API from a browser — the frontend lives on a different subdomain.
-- Login is already rate-limited (10/15min/IP) so an empty `IP_WHITELIST` is acceptable for a public deploy.
+6. **First deploy** runs migrations via `preDeployCommand`, seeds the admin user, then starts the server. Watch the deployment logs.
 
 ## Alternative: self-hosted with Docker Compose
 

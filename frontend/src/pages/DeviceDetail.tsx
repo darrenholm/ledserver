@@ -1,7 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import SunCalc from 'suncalc';
 import { devices as devicesApi } from '../api/endpoints';
 import type { Device, DeviceStatus } from '../types';
+
+interface BrightnessFormState {
+  autoBrightnessEnabled: boolean;
+  latitude: string;
+  longitude: string;
+  brightnessDay: number;
+  brightnessNight: number;
+  brightnessOffsetMinutes: number;
+}
+
+function deviceToBrightnessForm(d: Device): BrightnessFormState {
+  return {
+    autoBrightnessEnabled: d.auto_brightness_enabled,
+    latitude: d.latitude ?? '',
+    longitude: d.longitude ?? '',
+    brightnessDay: d.brightness_day,
+    brightnessNight: d.brightness_night,
+    brightnessOffsetMinutes: d.brightness_offset_minutes,
+  };
+}
+
+function formatTime(d: Date | null): string {
+  if (!d || isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>();
@@ -11,15 +37,35 @@ export default function DeviceDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [brightness, setBrightness] = useState(80);
+  const [bForm, setBForm] = useState<BrightnessFormState | null>(null);
 
   useEffect(() => {
     if (!id) return;
-    devicesApi.get(id).then((d) => {
-      setDevice(d);
-    }).catch((e) => setErr((e as Error).message));
+    devicesApi
+      .get(id)
+      .then((d) => {
+        setDevice(d);
+        setBForm(deviceToBrightnessForm(d));
+      })
+      .catch((e) => setErr((e as Error).message));
   }, [id]);
 
-  if (!device) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  const sunPreview = useMemo(() => {
+    if (!bForm) return null;
+    const lat = parseFloat(bForm.latitude);
+    const lng = parseFloat(bForm.longitude);
+    if (isNaN(lat) || isNaN(lng)) return null;
+    const times = SunCalc.getTimes(new Date(), lat, lng);
+    const offsetMs = bForm.brightnessOffsetMinutes * 60 * 1000;
+    return {
+      sunrise: times.sunrise,
+      sunset: times.sunset,
+      adjustedSunrise: new Date(times.sunrise.getTime() + offsetMs),
+      adjustedSunset: new Date(times.sunset.getTime() + offsetMs),
+    };
+  }, [bForm]);
+
+  if (!device || !bForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -31,6 +77,35 @@ export default function DeviceDetail() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveBrightnessForm = async () => {
+    const latitude = bForm.latitude.trim() === '' ? null : parseFloat(bForm.latitude);
+    const longitude = bForm.longitude.trim() === '' ? null : parseFloat(bForm.longitude);
+    if (bForm.autoBrightnessEnabled && (latitude === null || longitude === null)) {
+      setErr('Latitude and longitude are required when auto-brightness is enabled.');
+      return;
+    }
+    if (latitude !== null && (isNaN(latitude) || latitude < -90 || latitude > 90)) {
+      setErr('Latitude must be between -90 and 90.');
+      return;
+    }
+    if (longitude !== null && (isNaN(longitude) || longitude < -180 || longitude > 180)) {
+      setErr('Longitude must be between -180 and 180.');
+      return;
+    }
+    await action(async () => {
+      const updated = await devicesApi.update(device.id, {
+        autoBrightnessEnabled: bForm.autoBrightnessEnabled,
+        latitude,
+        longitude,
+        brightnessDay: bForm.brightnessDay,
+        brightnessNight: bForm.brightnessNight,
+        brightnessOffsetMinutes: bForm.brightnessOffsetMinutes,
+      } as any);
+      setDevice(updated);
+      setBForm(deviceToBrightnessForm(updated));
+    });
   };
 
   return (
@@ -53,7 +128,7 @@ export default function DeviceDetail() {
           <div className="stack">
             <div><span className="muted">Model:</span> {device.model ?? '—'}</div>
             <div><span className="muted">Firmware:</span> {device.firmware ?? '—'}</div>
-            <div><span className="muted">Address:</span> {device.ip_address}:{device.port}</div>
+            <div><span className="muted">Address:</span> {device.ip_address ? `${device.ip_address}:${device.port}` : '—'}</div>
             <div><span className="muted">Device key:</span> <code>{device.device_key}</code></div>
             <div><span className="muted">Location:</span> {device.location ?? '—'}</div>
             <div><span className="muted">Resolution:</span> {device.width_px && device.height_px ? `${device.width_px}×${device.height_px}` : '—'}</div>
@@ -132,6 +207,113 @@ export default function DeviceDetail() {
               Apply
             </button>
           </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Brightness automation</h3>
+          <label className="row" style={{ gap: 8, fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={bForm.autoBrightnessEnabled}
+              onChange={(e) => setBForm({ ...bForm, autoBrightnessEnabled: e.target.checked })}
+              style={{ width: 'auto' }}
+            />
+            <span>Enabled</span>
+          </label>
+        </div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Automatically transitions between day and night brightness based on local sunrise / sunset.
+        </div>
+
+        <div className="row" style={{ gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label>Latitude</label>
+            <input
+              value={bForm.latitude}
+              onChange={(e) => setBForm({ ...bForm, latitude: e.target.value })}
+              placeholder="43.4675"
+              inputMode="decimal"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Longitude</label>
+            <input
+              value={bForm.longitude}
+              onChange={(e) => setBForm({ ...bForm, longitude: e.target.value })}
+              placeholder="-81.1769"
+              inputMode="decimal"
+            />
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 12, marginTop: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label>Day brightness (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={bForm.brightnessDay}
+              onChange={(e) => setBForm({ ...bForm, brightnessDay: parseInt(e.target.value, 10) || 0 })}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Night brightness (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={bForm.brightnessNight}
+              onChange={(e) => setBForm({ ...bForm, brightnessNight: parseInt(e.target.value, 10) || 0 })}
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Offset (min)</label>
+            <input
+              type="number"
+              min={-120}
+              max={120}
+              value={bForm.brightnessOffsetMinutes}
+              onChange={(e) => setBForm({ ...bForm, brightnessOffsetMinutes: parseInt(e.target.value, 10) || 0 })}
+            />
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              + delays transitions, − anticipates. e.g. −30 dims 30 min before sunset.
+            </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 12, background: 'var(--surface-2)', padding: 12 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Today's transitions for this location</div>
+          {sunPreview ? (
+            <div className="row" style={{ gap: 24, fontSize: 14, flexWrap: 'wrap' }}>
+              <div>
+                ☀ Day brightness ({bForm.brightnessDay}%) starts at <strong>{formatTime(sunPreview.adjustedSunrise)}</strong>
+                <span className="muted"> (sunrise {formatTime(sunPreview.sunrise)})</span>
+              </div>
+              <div>
+                ☾ Night brightness ({bForm.brightnessNight}%) starts at <strong>{formatTime(sunPreview.adjustedSunset)}</strong>
+                <span className="muted"> (sunset {formatTime(sunPreview.sunset)})</span>
+              </div>
+            </div>
+          ) : (
+            <div className="muted" style={{ fontSize: 13 }}>
+              Enter latitude and longitude to preview today's transitions.
+            </div>
+          )}
+        </div>
+
+        {device.last_applied_at && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            Last applied: {device.last_applied_brightness}% at {new Date(device.last_applied_at).toLocaleString()}
+          </div>
+        )}
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button disabled={busy} onClick={saveBrightnessForm}>
+            Save automation
+          </button>
         </div>
       </div>
     </div>

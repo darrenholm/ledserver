@@ -26,6 +26,15 @@ export interface Device {
   online: boolean;
   firmware: string | null;
   metadata: Record<string, unknown>;
+  // Brightness automation
+  auto_brightness_enabled: boolean;
+  latitude: string | null;          // decimal columns serialize as strings from pg
+  longitude: string | null;
+  brightness_day: number;
+  brightness_night: number;
+  brightness_offset_minutes: number;
+  last_applied_brightness: number | null;
+  last_applied_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -25,6 +25,14 @@ interface DeviceRow {
   online: boolean;
   firmware: string | null;
   metadata: Record<string, unknown>;
+  auto_brightness_enabled: boolean;
+  latitude: string | null;
+  longitude: string | null;
+  brightness_day: number;
+  brightness_night: number;
+  brightness_offset_minutes: number;
+  last_applied_brightness: number | null;
+  last_applied_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -68,6 +76,13 @@ const updateSchema = z.object({
   widthPx: z.number().int().positive().optional(),
   heightPx: z.number().int().positive().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Brightness automation
+  autoBrightnessEnabled: z.boolean().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  brightnessDay: z.number().int().min(0).max(100).optional(),
+  brightnessNight: z.number().int().min(0).max(100).optional(),
+  brightnessOffsetMinutes: z.number().int().min(-120).max(120).optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -138,6 +153,12 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     width_px: 'widthPx',
     height_px: 'heightPx',
     metadata: 'metadata',
+    auto_brightness_enabled: 'autoBrightnessEnabled',
+    latitude: 'latitude',
+    longitude: 'longitude',
+    brightness_day: 'brightnessDay',
+    brightness_night: 'brightnessNight',
+    brightness_offset_minutes: 'brightnessOffsetMinutes',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {

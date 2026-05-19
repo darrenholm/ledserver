@@ -50,7 +50,15 @@ export async function api<T>(
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
-    throw new ApiError(res.status, (data as any)?.error ?? res.statusText, data);
+    // Prefer the most detailed message available: backend may return
+    //   { error: 'coex', code: 'DEVICE_ERROR', message: 'device sn=... not found' }
+    // or { error: 'validation', issues: [...] }
+    // or { error: 'some message' }
+    const d = data as { error?: string; message?: string; code?: string } | undefined;
+    const detail = d?.message
+      ? `${d.error ?? ''}${d.code ? ` (${d.code})` : ''}: ${d.message}`.replace(/^: /, '')
+      : d?.error ?? res.statusText;
+    throw new ApiError(res.status, detail, data);
   }
   return data as T;
 }

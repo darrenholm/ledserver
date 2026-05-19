@@ -13,6 +13,24 @@ interface BrightnessFormState {
   brightnessOffsetMinutes: number;
 }
 
+interface RentalFormState {
+  isRentable: boolean;
+  dailyRate: string;
+  weeklyRate: string;
+  monthlyRate: string;
+  currency: string;
+}
+
+function deviceToRentalForm(d: Device): RentalFormState {
+  return {
+    isRentable: d.is_rentable,
+    dailyRate: d.daily_rate ?? '',
+    weeklyRate: d.weekly_rate ?? '',
+    monthlyRate: d.monthly_rate ?? '',
+    currency: d.rental_currency ?? 'CAD',
+  };
+}
+
 function deviceToBrightnessForm(d: Device): BrightnessFormState {
   return {
     autoBrightnessEnabled: d.auto_brightness_enabled,
@@ -38,6 +56,7 @@ export default function DeviceDetail() {
   const [busy, setBusy] = useState(false);
   const [brightness, setBrightness] = useState(80);
   const [bForm, setBForm] = useState<BrightnessFormState | null>(null);
+  const [rForm, setRForm] = useState<RentalFormState | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -46,6 +65,7 @@ export default function DeviceDetail() {
       .then((d) => {
         setDevice(d);
         setBForm(deviceToBrightnessForm(d));
+        setRForm(deviceToRentalForm(d));
       })
       .catch((e) => setErr((e as Error).message));
   }, [id]);
@@ -65,7 +85,7 @@ export default function DeviceDetail() {
     };
   }, [bForm]);
 
-  if (!device || !bForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  if (!device || !bForm || !rForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -313,6 +333,82 @@ export default function DeviceDetail() {
         <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
           <button disabled={busy} onClick={saveBrightnessForm}>
             Save automation
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Rental settings</h3>
+          <label className="row" style={{ gap: 8, fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={rForm.isRentable}
+              onChange={(e) => setRForm({ ...rForm, isRentable: e.target.checked })}
+              style={{ width: 'auto' }}
+            />
+            <span>Listed on /rent</span>
+          </label>
+        </div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          When enabled, this display appears on the public rental page where anyone can book ad space.
+        </div>
+
+        <div className="row" style={{ gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label>Daily rate</label>
+            <input
+              value={rForm.dailyRate}
+              onChange={(e) => setRForm({ ...rForm, dailyRate: e.target.value })}
+              placeholder="50.00"
+              inputMode="decimal"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Weekly rate</label>
+            <input
+              value={rForm.weeklyRate}
+              onChange={(e) => setRForm({ ...rForm, weeklyRate: e.target.value })}
+              placeholder="300.00"
+              inputMode="decimal"
+            />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Monthly rate</label>
+            <input
+              value={rForm.monthlyRate}
+              onChange={(e) => setRForm({ ...rForm, monthlyRate: e.target.value })}
+              placeholder="1000.00"
+              inputMode="decimal"
+            />
+          </div>
+          <div style={{ width: 100 }}>
+            <label>Currency</label>
+            <input value={rForm.currency} onChange={(e) => setRForm({ ...rForm, currency: e.target.value.toUpperCase() })} maxLength={3} />
+          </div>
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+          Leave a rate empty to disable that duration. At least one rate is required when listed.
+        </div>
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button
+            disabled={busy}
+            onClick={() =>
+              action(async () => {
+                const updated = await devicesApi.update(device.id, {
+                  isRentable: rForm.isRentable,
+                  dailyRate: rForm.dailyRate.trim() === '' ? null : parseFloat(rForm.dailyRate),
+                  weeklyRate: rForm.weeklyRate.trim() === '' ? null : parseFloat(rForm.weeklyRate),
+                  monthlyRate: rForm.monthlyRate.trim() === '' ? null : parseFloat(rForm.monthlyRate),
+                  rentalCurrency: rForm.currency || 'CAD',
+                } as any);
+                setDevice(updated);
+                setRForm(deviceToRentalForm(updated));
+              })
+            }
+          >
+            Save rental settings
           </button>
         </div>
       </div>

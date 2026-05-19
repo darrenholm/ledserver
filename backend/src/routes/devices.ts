@@ -83,6 +83,12 @@ const updateSchema = z.object({
   brightnessDay: z.number().int().min(0).max(100).optional(),
   brightnessNight: z.number().int().min(0).max(100).optional(),
   brightnessOffsetMinutes: z.number().int().min(-120).max(120).optional(),
+  // Rentals
+  isRentable: z.boolean().optional(),
+  dailyRate: z.number().min(0).nullable().optional(),
+  weeklyRate: z.number().min(0).nullable().optional(),
+  monthlyRate: z.number().min(0).nullable().optional(),
+  rentalCurrency: z.string().min(3).max(3).optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -159,6 +165,11 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     brightness_day: 'brightnessDay',
     brightness_night: 'brightnessNight',
     brightness_offset_minutes: 'brightnessOffsetMinutes',
+    is_rentable: 'isRentable',
+    daily_rate: 'dailyRate',
+    weekly_rate: 'weeklyRate',
+    monthly_rate: 'monthlyRate',
+    rental_currency: 'rentalCurrency',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {

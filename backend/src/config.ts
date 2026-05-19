@@ -109,6 +109,22 @@ export const config = {
     timeoutMs: int('VNNOX_TIMEOUT_MS', 10_000),
   },
 
+  // Email (Resend) — used for rental approval / advertiser notifications.
+  // If RESEND_API_KEY is empty the email helper logs and no-ops, so dev still works.
+  email: {
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    fromAddress: process.env.MAIL_FROM ?? 'LED Control <no-reply@holmgraphics.ca>',
+    adminAddress: process.env.RENTAL_ADMIN_EMAIL ?? 'darren@holmgraphics.ca',
+  },
+
+  // Public base URL used to build links inside emails (approve/reject buttons,
+  // status pages, etc.). Falls back to MEDIA_PUBLIC_BASE_URL's host or localhost.
+  publicBaseUrl:
+    process.env.PUBLIC_BASE_URL ??
+    (process.env.MEDIA_PUBLIC_BASE_URL
+      ? process.env.MEDIA_PUBLIC_BASE_URL.replace(/\/?files\/?$/, '').replace(/\/?$/, '')
+      : 'http://localhost:8080'),
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

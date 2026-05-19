@@ -17,7 +17,13 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const isSuperAdmin = user?.role === 'super_admin';
-  const nav = isSuperAdmin ? [...NAV_BASE, { to: '/organizations', label: 'Organizations', end: false }] : NAV_BASE;
+  const nav = isSuperAdmin
+    ? [
+        ...NAV_BASE,
+        { to: '/rentals', label: 'Ad rentals', end: false },
+        { to: '/organizations', label: 'Organizations', end: false },
+      ]
+    : NAV_BASE;
 
   const scopeId = getOrgScope();
   const [scopeOrg, setScopeOrg] = useState<Organization | null>(null);

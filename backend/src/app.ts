@@ -13,6 +13,8 @@ import playlistsRouter from './routes/playlists';
 import mediaRouter from './routes/media';
 import logsRouter from './routes/logs';
 import orgsRouter from './routes/organizations';
+import publicRentalsRouter from './routes/publicRentals';
+import rentalsRouter from './routes/rentals';
 
 const MEDIA_FILES_DIR = path.join(process.cwd(), 'media', 'uploads');
 // The frontend build is copied here by the Dockerfile; absent in local dev.
@@ -52,6 +54,8 @@ export function createApp(): express.Express {
   api.use('/playlists', playlistsRouter);
   api.use('/media', mediaRouter);
   api.use('/logs', logsRouter);
+  api.use('/rentals', rentalsRouter);                  // super_admin + token-link approve/reject
+  api.use('/public', publicRentalsRouter);             // no-auth public marketplace endpoints
   app.use('/api', api);
 
   // --- Public media (Taurus controllers HTTP-pull from here) ---

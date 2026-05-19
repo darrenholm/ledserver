@@ -10,6 +10,11 @@ import MediaPage from './pages/Media';
 import Playlists from './pages/Playlists';
 import Logs from './pages/Logs';
 import Organizations from './pages/Organizations';
+import Rent from './pages/Rent';
+import RentDisplay from './pages/RentDisplay';
+import RentOrder from './pages/RentOrder';
+import Rentals from './pages/Rentals';
+import RentalDetail from './pages/RentalDetail';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -30,8 +35,16 @@ export default function App() {
   return (
     <AuthProvider>
       <Routes>
+        {/* Public auth screens */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+
+        {/* Public ad-rental marketplace (no login) */}
+        <Route path="/rent" element={<Rent />} />
+        <Route path="/rent/displays/:id" element={<RentDisplay />} />
+        <Route path="/rent/orders/:id" element={<RentOrder />} />
+
+        {/* Authenticated app */}
         <Route
           path="/"
           element={
@@ -51,6 +64,22 @@ export default function App() {
             element={
               <RequireSuperAdmin>
                 <Organizations />
+              </RequireSuperAdmin>
+            }
+          />
+          <Route
+            path="rentals"
+            element={
+              <RequireSuperAdmin>
+                <Rentals />
+              </RequireSuperAdmin>
+            }
+          />
+          <Route
+            path="rentals/:id"
+            element={
+              <RequireSuperAdmin>
+                <RentalDetail />
               </RequireSuperAdmin>
             }
           />

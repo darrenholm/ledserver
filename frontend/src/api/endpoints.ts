@@ -1,5 +1,8 @@
 import { api } from './client';
 import type {
+  AdminRental,
+  ArtworkUploadResponse,
+  CreateRentalResponse,
   Device,
   DeviceStatus,
   LogEntry,
@@ -7,6 +10,9 @@ import type {
   Media,
   Organization,
   Playlist,
+  PublicRentalStatus,
+  RentableDisplay,
+  RentableDisplayDetail,
   SignupResponse,
 } from '../types';
 
@@ -61,6 +67,39 @@ export const playlists = {
   remove: (id: string) => api<void>(`/playlists/${id}`, { method: 'DELETE' }),
   deploy: (id: string, deviceId: string) =>
     api<{ ok: boolean }>(`/playlists/${id}/deploy`, { body: { deviceId } }),
+};
+
+export const publicRentals = {
+  listDisplays: () => api<RentableDisplay[]>('/public/displays'),
+  getDisplay: (id: string) => api<RentableDisplayDetail>(`/public/displays/${id}`),
+  create: (data: {
+    deviceId: string;
+    advertiserName: string;
+    advertiserEmail: string;
+    advertiserPhone?: string;
+    advertiserBusiness?: string;
+    advertiserNotes?: string;
+    startDate: string;
+    durationUnit: 'day' | 'week' | 'month';
+    durationCount: number;
+  }) => api<CreateRentalResponse>('/public/rentals', { body: data }),
+  uploadArtwork: (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api<ArtworkUploadResponse>(`/public/rentals/${id}/artwork`, { formData: fd });
+  },
+  status: (id: string) => api<PublicRentalStatus>(`/public/rentals/${id}`),
+};
+
+export const rentals = {
+  list: (status?: string) => api<AdminRental[]>(`/rentals${status ? `?status=${status}` : ''}`),
+  get: (id: string) => api<AdminRental>(`/rentals/${id}`),
+  markPaid: (id: string, reference: string, provider = 'manual') =>
+    api<{ id: string; status: string }>(`/rentals/${id}/mark-paid`, { body: { reference, provider } }),
+  approve: (id: string, notes?: string) =>
+    api<AdminRental>(`/rentals/${id}/approve`, { body: { notes } }),
+  reject: (id: string, notes?: string) =>
+    api<AdminRental>(`/rentals/${id}/reject`, { body: { notes } }),
 };
 
 export const logs = {

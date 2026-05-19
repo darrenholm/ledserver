@@ -28,13 +28,19 @@ export interface Device {
   metadata: Record<string, unknown>;
   // Brightness automation
   auto_brightness_enabled: boolean;
-  latitude: string | null;          // decimal columns serialize as strings from pg
+  latitude: string | null;
   longitude: string | null;
   brightness_day: number;
   brightness_night: number;
   brightness_offset_minutes: number;
   last_applied_brightness: number | null;
   last_applied_at: string | null;
+  // Rentals
+  is_rentable: boolean;
+  daily_rate: string | null;
+  weekly_rate: string | null;
+  monthly_rate: string | null;
+  rental_currency: string;
   created_at: string;
   updated_at: string;
 }
@@ -104,4 +110,83 @@ export interface LoginResponse {
 
 export interface SignupResponse extends LoginResponse {
   organization: Organization;
+}
+
+// --- Ad-rental marketplace ---
+
+export interface RentableDisplay {
+  id: string;
+  name: string;
+  model: string | null;
+  location: string | null;
+  width_px: number | null;
+  height_px: number | null;
+  daily_rate: string | null;
+  weekly_rate: string | null;
+  monthly_rate: string | null;
+  rental_currency: string;
+  is_rentable: boolean;
+}
+
+export interface RentableDisplayDetail extends RentableDisplay {
+  bookedWindows: { start_date: string; end_date: string }[];
+}
+
+export type RentalStatus =
+  | 'pending_payment'
+  | 'pending_review'
+  | 'approved'
+  | 'active'
+  | 'expired'
+  | 'rejected'
+  | 'cancelled';
+
+export interface PublicRentalStatus {
+  id: string;
+  status: RentalStatus;
+  advertiser_name: string;
+  advertiser_email: string;
+  start_date: string;
+  end_date: string;
+  amount_cents: number;
+  currency: string;
+  artwork_warnings: string[];
+  paid_at: string | null;
+  review_notes: string | null;
+  device_name: string;
+  storage_url: string | null;
+}
+
+export interface AdminRental extends PublicRentalStatus {
+  device_id: string;
+  advertiser_phone: string | null;
+  advertiser_business: string | null;
+  advertiser_notes: string | null;
+  duration_unit: 'day' | 'week' | 'month';
+  duration_count: number;
+  payment_provider: string | null;
+  payment_reference: string | null;
+  media_id: string | null;
+  device_location: string | null;
+  artwork_url: string | null;
+  artwork_mime: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRentalResponse {
+  id: string;
+  status: RentalStatus;
+  endDate: string;
+  amountCents: number;
+  currency: string;
+  paymentInstructions: string;
+}
+
+export interface ArtworkUploadResponse {
+  ok: boolean;
+  mediaId: string;
+  warnings: string[];
+  dimensions: { width: number; height: number } | null;
+  artworkUrl: string;
 }

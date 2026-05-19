@@ -1,0 +1,63 @@
+import { api } from './client';
+import type {
+  Device,
+  DeviceStatus,
+  LogEntry,
+  LoginResponse,
+  Media,
+  Playlist,
+} from '../types';
+
+export const auth = {
+  login: (username: string, password: string) =>
+    api<LoginResponse>('/auth/login', { body: { username, password } }),
+};
+
+export const devices = {
+  list: () => api<Device[]>('/devices'),
+  get: (id: string) => api<Device>(`/devices/${id}`),
+  create: (data: Partial<Device> & { name: string; deviceKey: string; ipAddress: string }) =>
+    api<Device>('/devices', { body: data }),
+  update: (id: string, data: Partial<Device>) =>
+    api<Device>(`/devices/${id}`, { method: 'PATCH', body: data }),
+  remove: (id: string) => api<void>(`/devices/${id}`, { method: 'DELETE' }),
+  ping: (id: string) => api<{ ok: boolean; info: unknown }>(`/devices/${id}/ping`, { method: 'POST' }),
+  status: (id: string) => api<DeviceStatus>(`/devices/${id}/status`),
+  setBrightness: (id: string, brightness: number) =>
+    api<{ ok: boolean }>(`/devices/${id}/brightness`, { body: { brightness } }),
+  reboot: (id: string) => api<{ ok: boolean }>(`/devices/${id}/reboot`, { method: 'POST' }),
+  stop: (id: string) => api<{ ok: boolean }>(`/devices/${id}/stop`, { method: 'POST' }),
+};
+
+export const media = {
+  list: () => api<Media[]>('/media'),
+  upload: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api<Media>('/media', { formData: fd });
+  },
+  remove: (id: string) => api<void>(`/media/${id}`, { method: 'DELETE' }),
+};
+
+export const playlists = {
+  list: () => api<Playlist[]>('/playlists'),
+  get: (id: string) => api<Playlist>(`/playlists/${id}`),
+  create: (data: { name: string; description?: string; loop?: boolean; items: { mediaId: string; durationMs?: number }[] }) =>
+    api<Playlist>('/playlists', { body: data }),
+  update: (id: string, data: Partial<Playlist> & { items?: { mediaId: string; durationMs?: number }[] }) =>
+    api<Playlist>(`/playlists/${id}`, { method: 'PATCH', body: data }),
+  remove: (id: string) => api<void>(`/playlists/${id}`, { method: 'DELETE' }),
+  deploy: (id: string, deviceId: string) =>
+    api<{ ok: boolean }>(`/playlists/${id}/deploy`, { body: { deviceId } }),
+};
+
+export const logs = {
+  list: (params: { deviceId?: string; level?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.deviceId) q.set('deviceId', params.deviceId);
+    if (params.level) q.set('level', params.level);
+    if (params.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return api<LogEntry[]>(`/logs${qs ? `?${qs}` : ''}`);
+  },
+};

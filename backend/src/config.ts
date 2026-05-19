@@ -2,13 +2,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-function required(name: string, fallback?: string): string {
-  const v = process.env[name] ?? fallback;
-  if (v === undefined || v === '') {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return v;
-}
+const FORBIDDEN_PROD_VALUES = {
+  JWT_SECRET: new Set(['change-me-to-a-long-random-string', 'dev-only-secret-do-not-use-in-prod', '']),
+  ADMIN_PASSWORD: new Set(['changeme', 'admin', 'password', '']),
+  POSTGRES_PASSWORD: new Set(['novastar', 'postgres', 'password', '']),
+};
 
 function int(name: string, fallback: number): number {
   const v = process.env[name];
@@ -18,12 +16,41 @@ function int(name: string, fallback: number): number {
   return n;
 }
 
+const nodeEnv = process.env.NODE_ENV ?? 'development';
+const isProd = nodeEnv === 'production';
+
+function prodSafe(name: keyof typeof FORBIDDEN_PROD_VALUES, value: string | undefined): string {
+  if (isProd) {
+    if (!value || FORBIDDEN_PROD_VALUES[name].has(value)) {
+      throw new Error(
+        `Refusing to start: env var ${name} is unset or matches a known-default value. ` +
+          `Set a strong unique value before running in production.`,
+      );
+    }
+  }
+  return value ?? '';
+}
+
+const jwtSecret = prodSafe('JWT_SECRET', process.env.JWT_SECRET) || 'dev-only-secret-do-not-use-in-prod';
+const adminPassword = prodSafe('ADMIN_PASSWORD', process.env.ADMIN_PASSWORD) || 'changeme';
+const pgPassword = prodSafe('POSTGRES_PASSWORD', process.env.POSTGRES_PASSWORD) || 'novastar';
+
+if (isProd && (process.env.IP_WHITELIST ?? '') === '') {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[config] WARNING: IP_WHITELIST is empty in production. ' +
+      'The API will accept connections from anywhere. ' +
+      'Set IP_WHITELIST to lock down access, or rely on rate-limiting + auth only.',
+  );
+}
+
 export const config = {
-  nodeEnv: process.env.NODE_ENV ?? 'development',
+  nodeEnv,
+  isProd,
   apiPort: int('API_PORT', 4000),
 
   jwt: {
-    secret: required('JWT_SECRET', 'dev-only-secret-do-not-use-in-prod'),
+    secret: jwtSecret,
     expiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
   },
 
@@ -34,7 +61,7 @@ export const config = {
 
   admin: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
-    password: process.env.ADMIN_PASSWORD ?? 'changeme',
+    password: adminPassword,
   },
 
   coex: {
@@ -48,7 +75,7 @@ export const config = {
     port: int('POSTGRES_PORT', 5432),
     database: process.env.POSTGRES_DB ?? 'novastar',
     user: process.env.POSTGRES_USER ?? 'novastar',
-    password: process.env.POSTGRES_PASSWORD ?? 'novastar',
+    password: pgPassword,
   },
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

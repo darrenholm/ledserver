@@ -1,0 +1,25 @@
+{
+  email {$ACME_EMAIL:darren@holmgraphics.ca}
+}
+
+{$LED_DOMAIN} {
+  encode zstd gzip
+
+  # Tight default headers; helmet sets some of these on /api responses already.
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  # Cap upload size to match the backend's multer limit.
+  request_body {
+    max_size 500MB
+  }
+
+  reverse_proxy nginx:80 {
+    header_up X-Forwarded-Proto {scheme}
+    header_up X-Forwarded-For {remote_host}
+  }
+}

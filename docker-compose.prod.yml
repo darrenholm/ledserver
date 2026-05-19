@@ -1,0 +1,33 @@
+# Production overlay. Run as:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Adds Caddy in front of the stack for automatic Let's Encrypt TLS on $LED_DOMAIN.
+# Requires:
+#   - LED_DOMAIN env var pointing to your public hostname (e.g. led.holmgraphics.ca)
+#   - DNS A/AAAA record for that hostname pointing at this host
+#   - Ports 80 and 443 reachable from the public internet (for ACME challenge + traffic)
+
+services:
+  # Drop nginx's public port — it's now reachable only via Caddy on the internal network.
+  nginx:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - nginx
+    environment:
+      LED_DOMAIN: ${LED_DOMAIN:?set LED_DOMAIN in .env, e.g. led.holmgraphics.ca}
+      ACME_EMAIL: ${ACME_EMAIL:-darren@holmgraphics.ca}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

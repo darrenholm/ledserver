@@ -1,10 +1,19 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { query } from '../db';
 import { signToken } from '../middleware/auth';
 
 const router = Router();
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many login attempts, try again later' },
+});
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -18,7 +27,7 @@ interface UserRow {
   role: 'admin' | 'operator' | 'viewer';
 }
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { username, password } = loginSchema.parse(req.body);
   const { rows } = await query<UserRow>(
     `SELECT id, username, password_hash, role FROM users WHERE username = $1`,

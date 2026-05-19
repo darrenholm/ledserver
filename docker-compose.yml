@@ -38,6 +38,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-novastar}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-novastar}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://nginx/media}
+      MIGRATE_ON_BOOT: "1"
     volumes:
       - ./media:/app/media
     expose:

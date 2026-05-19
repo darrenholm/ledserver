@@ -15,4 +15,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 RUN mkdir -p /app/media
 EXPOSE 4000
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/server.js"]
+# Railway runs migrations via preDeployCommand in railway.json. For
+# docker-compose / local Docker we still want migrations at container start,
+# so the entrypoint runs them only when MIGRATE_ON_BOOT=1 (set in compose).
+CMD ["sh", "-c", "if [ \"$MIGRATE_ON_BOOT\" = \"1\" ]; then node dist/db/migrate.js; fi && node dist/server.js"]

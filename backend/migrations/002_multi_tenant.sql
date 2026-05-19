@@ -13,20 +13,18 @@ CREATE TABLE organizations (
 -- Seed the internal org for existing data.
 INSERT INTO organizations (name, slug) VALUES ('Holm Graphics', 'holmgraphics');
 
--- Widen the role check on users; allow NULL organization_id for super-admins.
+-- Drop the OLD role check first, add the column WITHOUT a new check yet,
+-- then migrate row values, THEN add the new constraint. (If we added the new
+-- constraint before the UPDATEs, existing rows with role='admin' would violate it.)
 ALTER TABLE users DROP CONSTRAINT users_role_check;
-ALTER TABLE users
-  ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
-  ADD CONSTRAINT users_role_check
-    CHECK (role IN ('super_admin', 'org_admin', 'org_operator', 'org_viewer'));
+ALTER TABLE users ADD COLUMN organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE;
 
--- Existing role values: anything that was 'admin' becomes 'super_admin' with NULL org.
-UPDATE users SET role = 'super_admin', organization_id = NULL
-  WHERE role IN ('admin');
-UPDATE users SET role = 'org_operator'
-  WHERE role IN ('operator');
-UPDATE users SET role = 'org_viewer'
-  WHERE role IN ('viewer');
+UPDATE users SET role = 'super_admin', organization_id = NULL WHERE role = 'admin';
+UPDATE users SET role = 'org_operator' WHERE role = 'operator';
+UPDATE users SET role = 'org_viewer' WHERE role = 'viewer';
+
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('super_admin', 'org_admin', 'org_operator', 'org_viewer'));
 
 -- Super-admins (NULL org) and org users (non-null org) need different constraints:
 -- super_admin → org_id IS NULL ; everyone else → org_id IS NOT NULL

@@ -33,7 +33,32 @@ function prodSafe(name: keyof typeof FORBIDDEN_PROD_VALUES, value: string | unde
 
 const jwtSecret = prodSafe('JWT_SECRET', process.env.JWT_SECRET) || 'dev-only-secret-do-not-use-in-prod';
 const adminPassword = prodSafe('ADMIN_PASSWORD', process.env.ADMIN_PASSWORD) || 'changeme';
-const pgPassword = prodSafe('POSTGRES_PASSWORD', process.env.POSTGRES_PASSWORD) || 'novastar';
+
+// Postgres: prefer DATABASE_URL (Railway, Heroku, etc.) when present.
+// Fall back to discrete POSTGRES_* env vars for docker-compose / local dev.
+const databaseUrl = process.env.DATABASE_URL;
+let pgConfig: { connectionString?: string; host: string; port: number; database: string; user: string; password: string; ssl?: boolean };
+if (databaseUrl) {
+  const parsed = new URL(databaseUrl);
+  pgConfig = {
+    connectionString: databaseUrl,
+    host: parsed.hostname,
+    port: parseInt(parsed.port || '5432', 10),
+    database: parsed.pathname.replace(/^\//, ''),
+    user: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    ssl: parsed.searchParams.get('sslmode') !== 'disable' && isProd,
+  };
+} else {
+  const pgPassword = prodSafe('POSTGRES_PASSWORD', process.env.POSTGRES_PASSWORD) || 'novastar';
+  pgConfig = {
+    host: process.env.POSTGRES_HOST ?? 'localhost',
+    port: int('POSTGRES_PORT', 5432),
+    database: process.env.POSTGRES_DB ?? 'novastar',
+    user: process.env.POSTGRES_USER ?? 'novastar',
+    password: pgPassword,
+  };
+}
 
 if (isProd && (process.env.IP_WHITELIST ?? '') === '') {
   // eslint-disable-next-line no-console
@@ -47,7 +72,8 @@ if (isProd && (process.env.IP_WHITELIST ?? '') === '') {
 export const config = {
   nodeEnv,
   isProd,
-  apiPort: int('API_PORT', 4000),
+  // Railway and some PaaS providers inject PORT; fall back to API_PORT for compose / local.
+  apiPort: int('PORT', int('API_PORT', 4000)),
 
   jwt: {
     secret: jwtSecret,
@@ -55,6 +81,11 @@ export const config = {
   },
 
   ipWhitelist: (process.env.IP_WHITELIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
@@ -70,13 +101,7 @@ export const config = {
     retries: int('COEX_RETRIES', 2),
   },
 
-  postgres: {
-    host: process.env.POSTGRES_HOST ?? 'localhost',
-    port: int('POSTGRES_PORT', 5432),
-    database: process.env.POSTGRES_DB ?? 'novastar',
-    user: process.env.POSTGRES_USER ?? 'novastar',
-    password: pgPassword,
-  },
+  postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',
 };

@@ -58,32 +58,82 @@ cd backend && npm test
 
 Tests use an in-process `MockCoexController` instead of real hardware.
 
-## Production deploy (led.holmgraphics.ca)
+## Production deploy — Railway (recommended)
 
-Caddy fronts the stack and handles Let's Encrypt automatically. Prereqs:
+The repo is structured for a 3-service Railway project: backend API, frontend, and managed Postgres. Railway handles TLS, custom domains, and persistent volumes.
 
-1. **A server** with a public IP, ports 80 and 443 reachable from the internet, Docker + Compose installed.
-2. **DNS** — `led.holmgraphics.ca` A record pointing at that server's public IP.
-3. **LAN reachability to the Taurus controllers** — the server must be able to reach each controller's IP. Easiest is to run this on a shop machine; if it's a cloud VPS, set up a Tailscale/WireGuard tunnel to the shop subnet first.
+### Architecture on Railway
 
-Then on the server:
+```
+led.holmgraphics.ca         →  frontend service  (nginx serving SPA)
+api.led.holmgraphics.ca     →  backend service   (Express + media static)
+                                 │
+                                 ├─ volume:  /app/media   (uploaded files)
+                                 └─ plugin:  Postgres     (managed)
+```
+
+Taurus controllers HTTP-pull media from `https://api.led.holmgraphics.ca/files/uploads/<file>`. They must be configured to phone home (outbound) to the API — direct inbound LAN access from Railway is not possible.
+
+### Step-by-step
+
+1. **Create Railway project** at https://railway.app/new from the GitHub repo.
+
+2. **Add a Postgres plugin** to the project (Railway dashboard → New → Database → PostgreSQL). It auto-provisions a `DATABASE_URL` variable.
+
+3. **Create the backend service** from the repo's `/backend` directory.
+   - Root directory: `backend`
+   - Build: Dockerfile (Railway auto-detects)
+   - **Variables (set these):**
+     ```
+     NODE_ENV=production
+     JWT_SECRET=<openssl rand -base64 48>
+     JWT_EXPIRES_IN=12h
+     ADMIN_USERNAME=admin
+     ADMIN_PASSWORD=<strong unique password>
+     DATABASE_URL=${{Postgres.DATABASE_URL}}        # reference the Postgres plugin
+     MEDIA_PUBLIC_BASE_URL=https://api.led.holmgraphics.ca/files
+     CORS_ALLOWED_ORIGINS=https://led.holmgraphics.ca
+     COEX_DEFAULT_PORT=5000
+     IP_WHITELIST=                                  # empty = open; restrict via app auth
+     ```
+   - **Volume:** add a volume mounted at `/app/media` (persists uploaded files).
+   - **Custom domain:** `api.led.holmgraphics.ca` — Railway will give you a CNAME target.
+
+4. **Create the frontend service** from `/frontend`.
+   - Root directory: `frontend`
+   - Build: Dockerfile
+   - **Build-time variable** (build arg `VITE_API_BASE_URL`): `https://api.led.holmgraphics.ca`
+   - **Custom domain:** `led.holmgraphics.ca`
+
+5. **DNS** — at your DNS provider (cPanel Zone Editor on swhc.ca, Cloudflare, etc.):
+   ```
+   led.holmgraphics.ca       CNAME   <railway-frontend-cname>
+   api.led.holmgraphics.ca   CNAME   <railway-backend-cname>
+   ```
+
+6. **First deploy** runs migrations and seeds the admin user. Watch the backend service logs.
+
+### Why these settings
+
+- `DATABASE_URL` is auto-injected when you wire the Postgres plugin into the service.
+- `MEDIA_PUBLIC_BASE_URL` is the URL Taurus controllers will use to fetch media files.
+- `CORS_ALLOWED_ORIGINS` restricts who can call the API from a browser — the frontend lives on a different subdomain.
+- Login is already rate-limited (10/15min/IP) so an empty `IP_WHITELIST` is acceptable for a public deploy.
+
+## Alternative: self-hosted with Docker Compose
+
+For a single-host deploy (shop machine, VPS, etc.) using the bundled Caddy TLS overlay:
 
 ```bash
-git clone <this-repo> /opt/ledserver && cd /opt/ledserver
+git clone https://github.com/darrenholm/ledserver /opt/ledserver && cd /opt/ledserver
 cp .env.prod.example .env
-# fill in JWT_SECRET (openssl rand -base64 48), ADMIN_PASSWORD, POSTGRES_PASSWORD
-# leave LED_DOMAIN=led.holmgraphics.ca
+# fill in JWT_SECRET, ADMIN_PASSWORD, POSTGRES_PASSWORD, LED_DOMAIN
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-Caddy will provision a TLS cert on first run. Watch logs with:
+Caddy will provision a Let's Encrypt cert on first boot. Requires ports 80 and 443 reachable from the public internet.
 
-```bash
-docker compose logs -f caddy
-```
-
-The API will **refuse to start** in production if `JWT_SECRET`, `ADMIN_PASSWORD`,
-or `POSTGRES_PASSWORD` are left at their default/example values.
+The API will **refuse to start** in production if `JWT_SECRET`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are left at default/example values.
 
 ### Hardening in this scaffold
 

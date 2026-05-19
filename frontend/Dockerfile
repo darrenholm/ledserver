@@ -9,5 +9,8 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx:alpine entrypoint envsubst's /etc/nginx/templates/*.template at startup,
+# so ${PORT} (set by Railway) gets baked into the conf file.
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+ENV PORT=80
 EXPOSE 80

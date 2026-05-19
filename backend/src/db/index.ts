@@ -2,11 +2,16 @@ import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 
 export const pool = new Pool({
-  host: config.postgres.host,
-  port: config.postgres.port,
-  database: config.postgres.database,
-  user: config.postgres.user,
-  password: config.postgres.password,
+  ...(config.postgres.connectionString
+    ? { connectionString: config.postgres.connectionString }
+    : {
+        host: config.postgres.host,
+        port: config.postgres.port,
+        database: config.postgres.database,
+        user: config.postgres.user,
+        password: config.postgres.password,
+      }),
+  ...(config.postgres.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
   max: 10,
   idleTimeoutMillis: 30_000,
 });

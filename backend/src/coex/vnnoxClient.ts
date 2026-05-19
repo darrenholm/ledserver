@@ -41,17 +41,6 @@ interface ScreenListItem {
   envBrightness?: number;
 }
 
-interface MasterControlBasics {
-  status: boolean;
-  signalSource: string;
-  networkPortsNum?: number;
-  version: string;
-  sn: string;
-  mac: string;
-  timeZone: string;
-  reportTime: string;
-}
-
 interface BatchResult {
   success: string[];
   fail: string[];
@@ -113,51 +102,58 @@ export class VnnoxCloudClient implements CoexTransport {
 
   // ----- identifier resolution -----
 
-  /** Look up playerId for this device's SN by scanning the screen list. Caches the result. */
+  /** Look up playerId for this device's SN. Caches via findScreen(). */
   private async resolvePlayerId(): Promise<string> {
     if (this.playerId) return this.playerId;
-    // Scan up to 1000 screens at once (API max); for >1000 devices we'd page.
-    const result = await this.request<{ total: number; items: ScreenListItem[] }>(
-      'GET',
-      '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
-    );
-    const hit = result.items.find((s) => s.sn === this.sn);
-    if (!hit) {
-      throw new CoexError(`device sn=${this.sn} not found in VNNOX screen list`, 'DEVICE_ERROR');
+    await this.findScreen();           // populates this.playerId
+    if (!this.playerId) {
+      throw new CoexError(`could not resolve playerId for sn=${this.sn}`, 'DEVICE_ERROR');
     }
-    // The "playerId" in real-time-control APIs isn't directly returned by screen list.
-    // It typically matches `sid` formatted as hex or is fetched from a separate endpoint.
-    // For now we use `sid` as a string — TODO: confirm against a real call and add a
-    // dedicated `/v2/player/...` lookup if needed.
-    this.playerId = String(hit.sid);
     return this.playerId;
   }
 
   // ----- CoexTransport implementation -----
 
-  async handshake(): Promise<DeviceInfo> {
-    const basics = await this.request<MasterControlBasics>(
-      'GET',
-      `/v2/device-status-monitor/master-control/basics/${encodeURIComponent(this.sn)}`,
-    );
-    return {
-      deviceKey: basics.sn,
-      model: 'Taurus / VNNOX',
-      firmware: basics.version,
-    };
-  }
-
-  async getStatus(): Promise<DeviceStatus> {
-    // Pull from the screen list which carries brightness, status, etc.
-    const result = await this.request<{ items: ScreenListItem[] }>(
+  /**
+   * Look up this device in the screen list. Works for TU/TB/T (Taurus) and
+   * other VNNOX-managed players. The `master-control/basics/{sn}` endpoint
+   * appears to cover MCTRL sync controllers only — using screen-list for both
+   * handshake() and getStatus() keeps us provider-type-agnostic.
+   */
+  private async findScreen(): Promise<ScreenListItem> {
+    // Naive single-page fetch; if a tenant has >1000 screens we'd page here.
+    const result = await this.request<{ total: number; items: ScreenListItem[] }>(
       'GET',
       `/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000`,
     );
     const hit = result.items.find((s) => s.sn === this.sn);
-    if (!hit) throw new CoexError(`device sn=${this.sn} not found`, 'DEVICE_ERROR');
+    if (!hit) {
+      throw new CoexError(
+        `device sn=${this.sn} not found in VNNOX screen list (total=${result.total})`,
+        'DEVICE_ERROR',
+      );
+    }
+    // Cache sid as playerId for control calls; refine when we have a real mapping endpoint.
+    if (!this.playerId) this.playerId = String(hit.sid);
+    return hit;
+  }
+
+  async handshake(): Promise<DeviceInfo> {
+    const screen = await this.findScreen();
     return {
-      online: hit.status === SCREEN_STATUS.ONLINE,
-      brightness: hit.brightness,
+      deviceKey: screen.sn,
+      model: 'Taurus / VNNOX',
+      firmware: 'unknown',     // screen-list response doesn't expose version; use basics endpoint if needed later
+      widthPx: undefined,
+      heightPx: undefined,
+    };
+  }
+
+  async getStatus(): Promise<DeviceStatus> {
+    const screen = await this.findScreen();
+    return {
+      online: screen.status === SCREEN_STATUS.ONLINE,
+      brightness: screen.brightness,
     };
   }
 

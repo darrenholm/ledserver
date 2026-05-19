@@ -12,6 +12,14 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     res.status(status).json({ error: 'coex', code: err.code, message: err.message });
     return;
   }
+  // Honor `.status` on plain Error objects (4xx app errors thrown by route helpers).
+  if (err instanceof Error) {
+    const status = (err as Error & { status?: number }).status;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      res.status(status).json({ error: err.message });
+      return;
+    }
+  }
   // eslint-disable-next-line no-console
   console.error('unhandled error:', err);
   res.status(500).json({ error: 'internal' });

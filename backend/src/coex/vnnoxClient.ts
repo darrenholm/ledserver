@@ -152,13 +152,13 @@ export class VnnoxCloudClient implements CoexTransport {
   async setBrightness(percent: number): Promise<void> {
     if (percent < 0 || percent > 100) throw new CoexError('brightness must be 0..100', 'PROTOCOL');
     const playerId = await this.resolvePlayerId();
-    // TODO: validate the exact endpoint shape against a live API call.
-    // Best candidate based on docs: POST /v2/player/real-time-control/brightness
-    //   body: { playerIds: [id], brightness: percent }
+    // NovaStar rejected { brightness: percent } with "json key 【value】is required",
+    // so the field is `value`. Keep this in sync with similar real-time-control
+    // endpoints (volume, etc.) if we add them.
     await this.request<BatchResult>(
       'POST',
       '/v2/player/real-time-control/brightness',
-      { playerIds: [playerId], brightness: percent },
+      { playerIds: [playerId], value: percent },
     );
   }
 

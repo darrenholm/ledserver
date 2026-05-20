@@ -78,6 +78,11 @@ export const media = {
     return api<Media>('/media', { formData: fd });
   },
   remove: (id: string) => api<void>(`/media/${id}`, { method: 'DELETE' }),
+  backfillThumbnails: () =>
+    api<{ candidates: number; generated: number; skipped: number; errors: { id: string; message: string }[] }>(
+      '/media/backfill-thumbnails',
+      { method: 'POST' },
+    ),
 };
 
 export const playlists = {

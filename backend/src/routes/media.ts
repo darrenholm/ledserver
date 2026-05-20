@@ -3,6 +3,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import { z } from 'zod';
 import { query } from '../db';
 import { authRequired, requireOrgRole } from '../middleware/auth';
@@ -13,7 +14,32 @@ const router = Router();
 router.use(authRequired);
 
 const MEDIA_DIR = path.join('/app', 'media', 'uploads');
+const THUMB_DIR = path.join(MEDIA_DIR, 'thumbnails');
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
+fs.mkdirSync(THUMB_DIR, { recursive: true });
+
+const THUMB_SIZE = 240;
+
+function isThumbnailable(mimeType: string): boolean {
+  // Sharp handles raster images and the first frame of GIFs/WEBPs.
+  return mimeType.startsWith('image/');
+}
+
+/**
+ * Generate a 240px webp thumbnail from a source image file. Returns the
+ * public URL of the thumbnail. Throws on Sharp errors so the upload route
+ * can decide whether to fail the whole upload or just skip the thumb.
+ */
+async function generateThumbnail(srcPath: string, mediaId: string): Promise<string> {
+  const thumbFile = `${mediaId}.webp`;
+  const thumbPath = path.join(THUMB_DIR, thumbFile);
+  await sharp(srcPath)
+    .rotate() // honor EXIF orientation
+    .resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toFile(thumbPath);
+  return `${config.mediaPublicBaseUrl}/uploads/thumbnails/${thumbFile}`;
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, MEDIA_DIR),
@@ -50,6 +76,7 @@ interface MediaRow {
   checksum_sha256: string | null;
   checksum_md5: string | null;
   storage_url: string;
+  thumbnail_url: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
 }
@@ -95,12 +122,32 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('fil
   const orgId = orgForInsert(req);
   const { sha256, md5 } = await hashFile(req.file.path);
   const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${req.file.filename}`;
+
+  // Insert first so we have the media id to base the thumbnail filename on.
   const { rows } = await query<MediaRow>(
     `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes, checksum_sha256, checksum_md5, storage_url)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [orgId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, md5, publicUrl],
   );
-  res.status(201).json(rows[0]);
+  const media = rows[0];
+
+  if (isThumbnailable(media.mime_type)) {
+    try {
+      const thumbnailUrl = await generateThumbnail(req.file.path, media.id);
+      const updated = await query<MediaRow>(
+        `UPDATE media SET thumbnail_url = $1 WHERE id = $2 RETURNING *`,
+        [thumbnailUrl, media.id],
+      );
+      res.status(201).json(updated.rows[0]);
+      return;
+    } catch (err) {
+      // Don't fail the upload over a thumbnail issue — log and return the row
+      // without one. The frontend will fall back to the original.
+      // eslint-disable-next-line no-console
+      console.error(`[media] thumbnail generation failed for ${media.id}:`, err);
+    }
+  }
+  res.status(201).json(media);
 });
 
 router.delete('/:id', requireOrgRole('org_admin'), async (req, res) => {
@@ -115,9 +162,45 @@ router.delete('/:id', requireOrgRole('org_admin'), async (req, res) => {
   }
   const media = rows[0];
   const filepath = path.join(MEDIA_DIR, media.filename);
+  const thumbPath = path.join(THUMB_DIR, `${media.id}.webp`);
   await query(`DELETE FROM media WHERE id = $1`, [req.params.id]);
   fs.promises.unlink(filepath).catch(() => undefined);
+  fs.promises.unlink(thumbPath).catch(() => undefined);
   res.status(204).end();
+});
+
+/**
+ * One-shot thumbnail backfill for image rows that pre-date thumbnail support.
+ * Skips rows that already have a thumbnail or whose source file is missing,
+ * so it's safe to re-run. Returns a small summary so the UI can show progress.
+ */
+router.post('/backfill-thumbnails', requireOrgRole('org_admin'), async (req, res) => {
+  const { clause, params } = orgClause(req, 'organization_id', 1);
+  const { rows } = await query<MediaRow>(
+    `SELECT * FROM media WHERE thumbnail_url IS NULL AND mime_type LIKE 'image/%' ${clause}`,
+    params,
+  );
+
+  let generated = 0;
+  let skipped = 0;
+  const errors: { id: string; message: string }[] = [];
+
+  for (const m of rows) {
+    const srcPath = path.join(MEDIA_DIR, m.filename);
+    if (!fs.existsSync(srcPath)) {
+      skipped++;
+      continue;
+    }
+    try {
+      const thumbnailUrl = await generateThumbnail(srcPath, m.id);
+      await query(`UPDATE media SET thumbnail_url = $1 WHERE id = $2`, [thumbnailUrl, m.id]);
+      generated++;
+    } catch (err) {
+      errors.push({ id: m.id, message: (err as Error).message });
+    }
+  }
+
+  res.json({ candidates: rows.length, generated, skipped, errors });
 });
 
 const updateSchema = z.object({

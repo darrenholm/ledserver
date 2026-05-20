@@ -62,6 +62,7 @@ export interface Media {
   size_bytes: string;
   duration_ms: number | null;
   storage_url: string;
+  thumbnail_url: string | null;
   created_at: string;
 }
 

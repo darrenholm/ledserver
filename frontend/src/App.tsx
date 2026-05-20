@@ -8,6 +8,7 @@ import Devices from './pages/Devices';
 import DeviceDetail from './pages/DeviceDetail';
 import MediaPage from './pages/Media';
 import Playlists from './pages/Playlists';
+import PlaylistDetail from './pages/PlaylistDetail';
 import Logs from './pages/Logs';
 import Organizations from './pages/Organizations';
 import Rent from './pages/Rent';
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="devices/:id" element={<DeviceDetail />} />
           <Route path="media" element={<MediaPage />} />
           <Route path="playlists" element={<Playlists />} />
+          <Route path="playlists/:id" element={<PlaylistDetail />} />
           <Route path="logs" element={<Logs />} />
           <Route
             path="organizations"

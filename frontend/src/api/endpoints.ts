@@ -62,7 +62,7 @@ export const playlists = {
   get: (id: string) => api<Playlist>(`/playlists/${id}`),
   create: (data: { name: string; description?: string; loop?: boolean; items: { mediaId: string; durationMs?: number }[] }) =>
     api<Playlist>('/playlists', { body: data }),
-  update: (id: string, data: Partial<Playlist> & { items?: { mediaId: string; durationMs?: number }[] }) =>
+  update: (id: string, data: Omit<Partial<Playlist>, 'items'> & { items?: { mediaId: string; durationMs?: number }[] }) =>
     api<Playlist>(`/playlists/${id}`, { method: 'PATCH', body: data }),
   remove: (id: string) => api<void>(`/playlists/${id}`, { method: 'DELETE' }),
   deploy: (id: string, deviceId: string) =>

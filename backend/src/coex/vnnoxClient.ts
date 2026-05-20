@@ -9,11 +9,6 @@ import {
 } from './types';
 import { signRequest, vnnoxBaseUrl } from './vnnoxSign';
 
-// Fallback when the device row doesn't yet have width_px/height_px filled in.
-// Operators can edit the device record to override.
-const DEFAULT_DEVICE_WIDTH_PX = 1920;
-const DEFAULT_DEVICE_HEIGHT_PX = 1080;
-
 type VnnoxMediaWidgetType = 'PICTURE' | 'GIF' | 'VIDEO';
 
 function widgetTypeFor(mimeType: string): VnnoxMediaWidgetType {
@@ -185,8 +180,6 @@ export class VnnoxCloudClient implements CoexTransport {
       throw new CoexError('vnnox pushPlaylist requires at least one media item', 'PROTOCOL');
     }
     const playerId = await this.resolvePlayerId();
-    const screenW = manifest.deviceWidthPx ?? DEFAULT_DEVICE_WIDTH_PX;
-    const screenH = manifest.deviceHeightPx ?? DEFAULT_DEVICE_HEIGHT_PX;
 
     // One page per media item → sequential playback. Each page holds a single
     // full-screen widget. Without a `schedule` field the program loops 24/7,
@@ -195,7 +188,7 @@ export class VnnoxCloudClient implements CoexTransport {
     // through pages, so true no-loop isn't achievable without a schedule.
     const pages = manifest.items.map((item, i) => ({
       name: `page-${i + 1}`,
-      widgets: [buildMediaWidget(item, screenW, screenH)],
+      widgets: [buildMediaWidget(item)],
     }));
 
     // /v2/player/program/normal both creates the program and publishes it to
@@ -251,7 +244,7 @@ function safeJson(text: string): unknown {
   }
 }
 
-function buildMediaWidget(item: PlaylistManifestItem, screenW: number, screenH: number) {
+function buildMediaWidget(item: PlaylistManifestItem) {
   if (!item.checksumMd5) {
     throw new CoexError(
       `vnnox widget for media ${item.mediaId} is missing checksumMd5 — backfill before deploy`,
@@ -272,6 +265,8 @@ function buildMediaWidget(item: PlaylistManifestItem, screenW: number, screenH: 
     duration: item.durationMs,
     url: item.url,
     zIndex: 0,
-    layout: { x: 0, y: 0, width: screenW, height: screenH },
+    // VNNOX layout dimensions are percentages, not pixels (their validator
+    // rejects raw numbers with "must be Percentage"). Full-screen = 100%.
+    layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
   };
 }

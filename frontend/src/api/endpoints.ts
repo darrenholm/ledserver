@@ -7,6 +7,7 @@ import type {
   DeviceStatus,
   LogEntry,
   LoginResponse,
+  InviteLookup,
   ManagedUser,
   Media,
   Organization,
@@ -16,6 +17,7 @@ import type {
   RentableDisplayDetail,
   Role,
   SignupResponse,
+  UserInvite,
 } from '../types';
 
 export const auth = {
@@ -23,6 +25,11 @@ export const auth = {
     api<LoginResponse>('/auth/login', { body: { username, password } }),
   signup: (organizationName: string, username: string, password: string) =>
     api<SignupResponse>('/auth/signup', { body: { organizationName, username, password } }),
+  lookupInvite: (token: string) => api<InviteLookup>(`/auth/invite/${encodeURIComponent(token)}`),
+  acceptInvite: (token: string, username: string, password: string) =>
+    api<LoginResponse>(`/auth/invite/${encodeURIComponent(token)}/accept`, {
+      body: { username, password },
+    }),
 };
 
 export const users = {
@@ -32,6 +39,11 @@ export const users = {
   update: (id: string, data: { password?: string; role?: Role }) =>
     api<ManagedUser>(`/users/${id}`, { method: 'PATCH', body: data }),
   remove: (id: string) => api<void>(`/users/${id}`, { method: 'DELETE' }),
+  listInvites: () => api<UserInvite[]>('/users/invites'),
+  invite: (data: { email: string; role: Role }) =>
+    api<UserInvite>('/users/invites', { body: data }),
+  resendInvite: (id: string) => api<UserInvite>(`/users/invites/${id}/resend`, { method: 'POST' }),
+  revokeInvite: (id: string) => api<void>(`/users/invites/${id}`, { method: 'DELETE' }),
 };
 
 export const organizations = {

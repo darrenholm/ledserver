@@ -142,6 +142,37 @@ export function rentalRejectedEmail(a: SimpleRentalArgs): { subject: string; htm
   };
 }
 
+interface UserInviteArgs {
+  inviterName: string;
+  organizationName: string;
+  role: string;
+  token: string;
+  expiresAt: Date;
+}
+
+export function userInviteEmail(args: UserInviteArgs): { subject: string; html: string; text: string } {
+  const acceptUrl = `${config.publicBaseUrl}/accept-invite?token=${encodeURIComponent(args.token)}`;
+  const expiresStr = args.expiresAt.toLocaleString('en-CA', { dateStyle: 'long', timeStyle: 'short' });
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#111;line-height:1.4">
+      <h2>You've been invited to ${escapeHtml(args.organizationName)} on LED Server</h2>
+      <p>${escapeHtml(args.inviterName)} has invited you to join <strong>${escapeHtml(args.organizationName)}</strong> as <code>${escapeHtml(args.role)}</code>.</p>
+      <p style="margin:24px 0">
+        <a href="${acceptUrl}" style="display:inline-block;padding:10px 18px;background:#16a34a;color:white;border-radius:6px;text-decoration:none">Accept invitation</a>
+      </p>
+      <p style="font-size:13px;color:#666">This link expires on ${escapeHtml(expiresStr)}. If you weren't expecting this, you can ignore the email — no account is created until you accept.</p>
+    </div>
+  `;
+  const text = `${args.inviterName} invited you to join ${args.organizationName} on LED Server as ${args.role}.
+Accept: ${acceptUrl}
+Link expires ${expiresStr}.`;
+  return {
+    subject: `Invitation to ${args.organizationName} on LED Server`,
+    html,
+    text,
+  };
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

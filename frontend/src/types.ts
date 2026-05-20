@@ -112,6 +112,24 @@ export interface ManagedUser {
   updated_at: string;
 }
 
+export interface UserInvite {
+  id: string;
+  organization_id: string;
+  email: string;
+  role: Role;
+  expires_at: string;
+  created_by: string | null;
+  created_at: string;
+  accepted_at: string | null;
+}
+
+export interface InviteLookup {
+  email: string;
+  role: Role;
+  organizationName: string;
+  expiresAt: string;
+}
+
 export interface LoginResponse {
   token: string;
   user: AuthUser;

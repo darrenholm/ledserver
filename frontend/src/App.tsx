@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './auth';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import AcceptInvite from './pages/AcceptInvite';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
 import DeviceDetail from './pages/DeviceDetail';
@@ -48,6 +49,7 @@ export default function App() {
         {/* Public auth screens */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/accept-invite" element={<AcceptInvite />} />
 
         {/* Public ad-rental marketplace (no login) */}
         <Route path="/rent" element={<Rent />} />

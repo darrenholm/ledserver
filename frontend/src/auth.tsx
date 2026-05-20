@@ -8,6 +8,7 @@ interface AuthCtx {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   signup: (organizationName: string, username: string, password: string) => Promise<void>;
+  acceptInvite: (inviteToken: string, username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -51,13 +52,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
+  const acceptInvite = async (inviteToken: string, username: string, password: string) => {
+    const res = await authApi.acceptInvite(inviteToken, username, password);
+    setToken(res.token);
+    setOrgScope(null);
+    setUser(res.user);
+  };
+
   const logout = () => {
     setToken(null);
     setOrgScope(null);
     setUser(null);
   };
 
-  return <Ctx.Provider value={{ user, loading, login, signup, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, login, signup, acceptInvite, logout }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth(): AuthCtx {

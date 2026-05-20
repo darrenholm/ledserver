@@ -1,48 +1,74 @@
 import { useEffect, useState } from 'react';
 import { users as usersApi } from '../api/endpoints';
 import { useAuth } from '../auth';
-import type { ManagedUser, Role } from '../types';
+import type { ManagedUser, Role, UserInvite } from '../types';
 
 const ASSIGNABLE_ROLES: Role[] = ['org_admin', 'org_operator', 'org_viewer'];
 
 export default function Users() {
   const { user: me } = useAuth();
   const [list, setList] = useState<ManagedUser[]>([]);
+  const [invites, setInvites] = useState<UserInvite[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // Create form
-  const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<Role>('org_operator');
-  const [creating, setCreating] = useState(false);
+  // Invite form
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<Role>('org_operator');
+  const [inviting, setInviting] = useState(false);
 
-  const refresh = () =>
+  const refresh = () => {
     usersApi
       .list()
       .then(setList)
       .catch((e) => setErr((e as Error).message));
+    usersApi
+      .listInvites()
+      .then(setInvites)
+      .catch((e) => setErr((e as Error).message));
+  };
 
   useEffect(() => {
     refresh();
   }, []);
 
-  const onCreate = async (e: React.FormEvent) => {
+  const onInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
     setInfo(null);
-    setCreating(true);
+    setInviting(true);
     try {
-      await usersApi.create({ username: newUsername.trim(), password: newPassword, role: newRole });
-      setNewUsername('');
-      setNewPassword('');
-      setNewRole('org_operator');
-      setInfo(`Created user "${newUsername.trim()}".`);
+      await usersApi.invite({ email: inviteEmail.trim(), role: inviteRole });
+      setInviteEmail('');
+      setInviteRole('org_operator');
+      setInfo(`Invitation sent to ${inviteEmail.trim()}.`);
       refresh();
     } catch (e) {
       setErr((e as Error).message);
     } finally {
-      setCreating(false);
+      setInviting(false);
+    }
+  };
+
+  const onResend = async (i: UserInvite) => {
+    setErr(null);
+    try {
+      await usersApi.resendInvite(i.id);
+      setInfo(`Re-sent invitation to ${i.email}. The previous link is no longer valid.`);
+      refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const onRevoke = async (i: UserInvite) => {
+    if (!confirm(`Revoke invitation to ${i.email}? The link in their email will stop working.`)) return;
+    try {
+      await usersApi.revokeInvite(i.id);
+      setInfo(`Revoked invitation to ${i.email}.`);
+      refresh();
+    } catch (e) {
+      setErr((e as Error).message);
     }
   };
 
@@ -87,43 +113,30 @@ export default function Users() {
     <div className="stack">
       <h1 style={{ margin: 0 }}>Users</h1>
       <div className="muted" style={{ fontSize: 13 }}>
-        Manage who can sign in. Roles control what each user can do — admins can manage users
-        and devices; operators can deploy playlists; viewers are read-only.
+        Invite teammates by email. They pick their own username and password when they accept.
+        Roles: admins manage users and devices, operators deploy playlists, viewers are read-only.
       </div>
 
       {err && <div className="error-banner">{err}</div>}
       {info && <div className="success-banner">{info}</div>}
 
       <div className="card">
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Invite a new user</h2>
-        <form onSubmit={onCreate} className="stack" style={{ gap: 12 }}>
+        <h2 style={{ marginTop: 0, fontSize: 18 }}>Invite by email</h2>
+        <form onSubmit={onInvite} className="stack" style={{ gap: 12 }}>
           <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label>Username</label>
+            <div style={{ flex: '1 1 240px' }}>
+              <label>Email</label>
               <input
-                type="text"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                placeholder="e.g. jane.smith"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="jane@example.com"
                 required
-                minLength={3}
-                maxLength={60}
-              />
-            </div>
-            <div style={{ flex: '1 1 200px' }}>
-              <label>Temporary password</label>
-              <input
-                type="text"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="at least 8 characters"
-                required
-                minLength={8}
               />
             </div>
             <div style={{ flex: '0 1 160px' }}>
               <label>Role</label>
-              <select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)}>
+              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as Role)}>
                 {ASSIGNABLE_ROLES.map((r) => (
                   <option key={r} value={r}>{r}</option>
                 ))}
@@ -131,14 +144,59 @@ export default function Users() {
             </div>
           </div>
           <div>
-            <button type="submit" disabled={creating}>
-              {creating ? 'Creating…' : 'Create user'}
+            <button type="submit" disabled={inviting}>
+              {inviting ? 'Sending…' : 'Send invitation'}
             </button>
           </div>
         </form>
       </div>
 
+      {invites.length > 0 && (
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <h2 style={{ margin: 0, fontSize: 16 }}>Pending invitations</h2>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Sent</th>
+                <th>Expires</th>
+                <th style={{ textAlign: 'right' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invites.map((i) => {
+                const expired = new Date(i.expires_at).getTime() < Date.now();
+                return (
+                  <tr key={i.id}>
+                    <td>{i.email}</td>
+                    <td><code>{i.role}</code></td>
+                    <td className="muted">{new Date(i.created_at).toLocaleString()}</td>
+                    <td className={expired ? '' : 'muted'} style={expired ? { color: 'var(--danger, #b91c1c)' } : undefined}>
+                      {expired ? 'expired' : new Date(i.expires_at).toLocaleString()}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="secondary" onClick={() => onResend(i)} style={{ marginRight: 6 }}>
+                        Resend
+                      </button>
+                      <button className="danger" onClick={() => onRevoke(i)}>
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <h2 style={{ margin: 0, fontSize: 16 }}>Active users</h2>
+        </div>
         <table>
           <thead>
             <tr>

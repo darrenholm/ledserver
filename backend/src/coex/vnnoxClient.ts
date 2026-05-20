@@ -30,23 +30,17 @@ export interface VnnoxClientOptions {
   timeoutMs?: number;
 }
 
-interface ScreenListItem {
-  sid: number;
-  name: string;
-  mac: string;
+interface PlayerOnlineStatus {
+  playerId: string;
   sn: string;
-  address?: string;
-  status: number; // 1 normal, 2 offline, 3 risky, 4 faulty
-  brightness: number;
-  envBrightness?: number;
+  onlineStatus: number;          // 0 offline, 1 online
+  lastOnlineTime?: string;
 }
 
 interface BatchResult {
   success: string[];
   fail: string[];
 }
-
-const SCREEN_STATUS = { ONLINE: 1, OFFLINE: 2, RISKY: 3, FAULTY: 4 } as const;
 
 export class VnnoxCloudClient implements CoexTransport {
   private readonly baseUrl: string;
@@ -102,10 +96,32 @@ export class VnnoxCloudClient implements CoexTransport {
 
   // ----- identifier resolution -----
 
-  /** Look up playerId for this device's SN. Caches via findScreen(). */
+  /**
+   * Look up player by SN via the documented `/v2/player/current/online-status`
+   * endpoint (Player Management scope). Returns onlineStatus + playerId.
+   * Caches playerId for subsequent control calls (brightness, reboot, etc.).
+   */
+  private async findPlayer(): Promise<PlayerOnlineStatus> {
+    const result = await this.request<PlayerOnlineStatus[]>(
+      'POST',
+      '/v2/player/current/online-status',
+      { playerSns: [this.sn] },
+    );
+    if (!Array.isArray(result) || result.length === 0) {
+      throw new CoexError(
+        `device sn=${this.sn} not found in VNNOX (player list returned empty)`,
+        'DEVICE_ERROR',
+      );
+    }
+    const hit = result.find((p) => p.sn === this.sn) ?? result[0];
+    if (!this.playerId) this.playerId = hit.playerId;
+    return hit;
+  }
+
+  /** Resolve playerId for control APIs. Hits the same player endpoint. */
   private async resolvePlayerId(): Promise<string> {
     if (this.playerId) return this.playerId;
-    await this.findScreen();           // populates this.playerId
+    await this.findPlayer();
     if (!this.playerId) {
       throw new CoexError(`could not resolve playerId for sn=${this.sn}`, 'DEVICE_ERROR');
     }
@@ -114,46 +130,22 @@ export class VnnoxCloudClient implements CoexTransport {
 
   // ----- CoexTransport implementation -----
 
-  /**
-   * Look up this device in the screen list. Works for TU/TB/T (Taurus) and
-   * other VNNOX-managed players. The `master-control/basics/{sn}` endpoint
-   * appears to cover MCTRL sync controllers only — using screen-list for both
-   * handshake() and getStatus() keeps us provider-type-agnostic.
-   */
-  private async findScreen(): Promise<ScreenListItem> {
-    // Naive single-page fetch; if a tenant has >1000 screens we'd page here.
-    const result = await this.request<{ total: number; items: ScreenListItem[] }>(
-      'GET',
-      `/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000`,
-    );
-    const hit = result.items.find((s) => s.sn === this.sn);
-    if (!hit) {
-      throw new CoexError(
-        `device sn=${this.sn} not found in VNNOX screen list (total=${result.total})`,
-        'DEVICE_ERROR',
-      );
-    }
-    // Cache sid as playerId for control calls; refine when we have a real mapping endpoint.
-    if (!this.playerId) this.playerId = String(hit.sid);
-    return hit;
-  }
-
   async handshake(): Promise<DeviceInfo> {
-    const screen = await this.findScreen();
+    const player = await this.findPlayer();
     return {
-      deviceKey: screen.sn,
+      deviceKey: player.sn,
       model: 'Taurus / VNNOX',
-      firmware: 'unknown',     // screen-list response doesn't expose version; use basics endpoint if needed later
+      firmware: 'unknown',
       widthPx: undefined,
       heightPx: undefined,
     };
   }
 
   async getStatus(): Promise<DeviceStatus> {
-    const screen = await this.findScreen();
+    const player = await this.findPlayer();
     return {
-      online: screen.status === SCREEN_STATUS.ONLINE,
-      brightness: screen.brightness,
+      online: player.onlineStatus === 1,
+      brightness: 0,  // brightness lives on a different endpoint (running-status) — wire it in once verified
     };
   }
 

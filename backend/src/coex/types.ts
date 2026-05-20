@@ -19,13 +19,21 @@ export interface PlaylistManifestItem {
   url: string;            // public URL the device will pull from
   mimeType: string;
   durationMs: number;
+  sizeBytes: number;
   checksumSha256?: string;
+  /** Lowercase hex MD5 — required by VNNOX widget payloads. May be lazily backfilled. */
+  checksumMd5?: string;
+  widthPx?: number;
+  heightPx?: number;
 }
 
 export interface PlaylistManifest {
   playlistId: string;
   loop: boolean;
   items: PlaylistManifestItem[];
+  /** Target device dimensions, used to build a full-screen layout for cloud providers like VNNOX. */
+  deviceWidthPx?: number;
+  deviceHeightPx?: number;
 }
 
 /**

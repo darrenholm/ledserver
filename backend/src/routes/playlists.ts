@@ -1,11 +1,26 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { query, withTx } from '../db';
 import { authRequired, requireOrgRole } from '../middleware/auth';
 import { coexRegistry } from '../coex/registry';
 import { writeLog } from '../services/logs';
 import { orgClause, orgForInsert } from '../services/scope';
 import { PlaylistManifest } from '../coex/types';
+
+const MEDIA_DIR = path.join('/app', 'media', 'uploads');
+
+function md5File(filepath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('md5');
+    const stream = fs.createReadStream(filepath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
 
 const router = Router();
 router.use(authRequired);
@@ -173,15 +188,22 @@ interface DeployRow {
   pl_org_id: string;
   pl_loop: boolean;
   media_id: string;
+  media_filename: string;
   storage_url: string;
   mime_type: string;
   duration_ms: number;
+  size_bytes: string;
   checksum_sha256: string | null;
+  checksum_md5: string | null;
+  media_width_px: number | null;
+  media_height_px: number | null;
   d_org_id: string;
   d_provider: 'vnnox' | 'lan_direct' | 'mock';
   ip_address: string | null;
   port: number;
   device_key: string;
+  d_width_px: number | null;
+  d_height_px: number | null;
 }
 
 router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
@@ -194,15 +216,22 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
         p.organization_id AS pl_org_id,
         p.loop AS pl_loop,
         m.id AS media_id,
+        m.filename AS media_filename,
         m.storage_url,
         m.mime_type,
         pi.duration_ms,
+        m.size_bytes,
         m.checksum_sha256,
+        m.checksum_md5,
+        m.width_px  AS media_width_px,
+        m.height_px AS media_height_px,
         d.organization_id AS d_org_id,
         d.provider AS d_provider,
         d.ip_address,
         d.port,
-        d.device_key
+        d.device_key,
+        d.width_px  AS d_width_px,
+        d.height_px AS d_height_px
      FROM playlists p
      JOIN playlist_items pi ON pi.playlist_id = p.id
      JOIN media m ON m.id = pi.media_id
@@ -221,15 +250,33 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
     res.status(403).json({ error: 'playlist and device belong to different organizations' });
     return;
   }
+  // VNNOX widget payloads require lowercase MD5. Backfill any media row missing it
+  // by re-hashing the file on disk, then persist so we only ever do this once per row.
+  if (first.d_provider === 'vnnox') {
+    for (const r of rows) {
+      if (r.checksum_md5) continue;
+      const filepath = path.join(MEDIA_DIR, r.media_filename);
+      const md5 = await md5File(filepath);
+      r.checksum_md5 = md5;
+      await query(`UPDATE media SET checksum_md5 = $1 WHERE id = $2`, [md5, r.media_id]);
+    }
+  }
+
   const manifest: PlaylistManifest = {
     playlistId: first.pl_id,
     loop: first.pl_loop,
+    deviceWidthPx: first.d_width_px ?? undefined,
+    deviceHeightPx: first.d_height_px ?? undefined,
     items: rows.map((r) => ({
       mediaId: r.media_id,
       url: r.storage_url,
       mimeType: r.mime_type,
       durationMs: r.duration_ms,
+      sizeBytes: Number(r.size_bytes),
       checksumSha256: r.checksum_sha256 ?? undefined,
+      checksumMd5: r.checksum_md5 ?? undefined,
+      widthPx: r.media_width_px ?? undefined,
+      heightPx: r.media_height_px ?? undefined,
     })),
   };
   const client = coexRegistry.get({

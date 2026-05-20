@@ -48,6 +48,7 @@ interface MediaRow {
   width_px: number | null;
   height_px: number | null;
   checksum_sha256: string | null;
+  checksum_md5: string | null;
   storage_url: string;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -75,12 +76,13 @@ router.get('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-function sha256File(filepath: string): Promise<string> {
+function hashFile(filepath: string): Promise<{ sha256: string; md5: string }> {
   return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
+    const sha = crypto.createHash('sha256');
+    const md = crypto.createHash('md5');
     const stream = fs.createReadStream(filepath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('data', (chunk) => { sha.update(chunk); md.update(chunk); });
+    stream.on('end', () => resolve({ sha256: sha.digest('hex'), md5: md.digest('hex') }));
     stream.on('error', reject);
   });
 }
@@ -91,12 +93,12 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('fil
     return;
   }
   const orgId = orgForInsert(req);
-  const checksum = await sha256File(req.file.path);
+  const { sha256, md5 } = await hashFile(req.file.path);
   const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${req.file.filename}`;
   const { rows } = await query<MediaRow>(
-    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes, checksum_sha256, storage_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [orgId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, checksum, publicUrl],
+    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes, checksum_sha256, checksum_md5, storage_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [orgId, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, md5, publicUrl],
   );
   res.status(201).json(rows[0]);
 });

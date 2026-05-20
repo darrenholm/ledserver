@@ -5,8 +5,26 @@ import {
   DeviceInfo,
   DeviceStatus,
   PlaylistManifest,
+  PlaylistManifestItem,
 } from './types';
 import { signRequest, vnnoxBaseUrl } from './vnnoxSign';
+
+// Fallback when the device row doesn't yet have width_px/height_px filled in.
+// Operators can edit the device record to override.
+const DEFAULT_DEVICE_WIDTH_PX = 1920;
+const DEFAULT_DEVICE_HEIGHT_PX = 1080;
+
+type VnnoxMediaWidgetType = 'PICTURE' | 'GIF' | 'VIDEO';
+
+function widgetTypeFor(mimeType: string): VnnoxMediaWidgetType {
+  if (mimeType === 'image/gif') return 'GIF';
+  if (mimeType.startsWith('video/')) return 'VIDEO';
+  if (mimeType.startsWith('image/')) return 'PICTURE';
+  throw new CoexError(
+    `vnnox cannot publish unsupported mime type: ${mimeType}`,
+    'PROTOCOL',
+  );
+}
 
 /**
  * VnnoxCloudClient — talks to NovaStar's NovaCloud Open Platform v2 REST API.
@@ -162,17 +180,43 @@ export class VnnoxCloudClient implements CoexTransport {
     );
   }
 
-  async pushPlaylist(_manifest: PlaylistManifest): Promise<void> {
-    // VNNOX content publishing is a multi-step process (create solution → schedule → publish).
-    // Implementation deferred until we exercise the Media APIs against the real account.
-    throw new CoexError(
-      'pushPlaylist not yet implemented for vnnox provider — use the VNNOX console for now, or implement via the Media APIs',
-      'PROTOCOL',
+  async pushPlaylist(manifest: PlaylistManifest): Promise<void> {
+    if (manifest.items.length === 0) {
+      throw new CoexError('vnnox pushPlaylist requires at least one media item', 'PROTOCOL');
+    }
+    const playerId = await this.resolvePlayerId();
+    const screenW = manifest.deviceWidthPx ?? DEFAULT_DEVICE_WIDTH_PX;
+    const screenH = manifest.deviceHeightPx ?? DEFAULT_DEVICE_HEIGHT_PX;
+
+    // One page per media item → sequential playback. Each page holds a single
+    // full-screen widget. Without a `schedule` field the program loops 24/7,
+    // which matches the playlist.loop=true contract; we treat loop=false as
+    // a single pass by setting repeatCount=1 (default) — VNNOX still cycles
+    // through pages, so true no-loop isn't achievable without a schedule.
+    const pages = manifest.items.map((item, i) => ({
+      name: `page-${i + 1}`,
+      widgets: [buildMediaWidget(item, screenW, screenH)],
+    }));
+
+    // /v2/player/program/normal both creates the program and publishes it to
+    // the target players in a single call. Response: { success: [...], fail: [...] }.
+    const result = await this.request<BatchResult>(
+      'POST',
+      '/v2/player/program/normal',
+      { playerIds: [playerId], pages },
     );
+    if (result?.fail && result.fail.includes(playerId)) {
+      throw new CoexError(
+        `vnnox rejected publish for playerId=${playerId} (fail list returned)`,
+        'DEVICE_ERROR',
+      );
+    }
   }
 
   async play(_playlistId: string): Promise<void> {
-    throw new CoexError('play() not yet wired up for vnnox provider', 'PROTOCOL');
+    // VNNOX's /v2/player/program/normal both publishes and activates the program,
+    // so there's nothing to do here — pushPlaylist has already started playback.
+    // Re-issuing a control call could fight with the publish. No-op.
   }
 
   async stop(): Promise<void> {
@@ -205,4 +249,29 @@ function safeJson(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+function buildMediaWidget(item: PlaylistManifestItem, screenW: number, screenH: number) {
+  if (!item.checksumMd5) {
+    throw new CoexError(
+      `vnnox widget for media ${item.mediaId} is missing checksumMd5 — backfill before deploy`,
+      'PROTOCOL',
+    );
+  }
+  if (!item.sizeBytes || item.sizeBytes <= 0) {
+    throw new CoexError(
+      `vnnox widget for media ${item.mediaId} is missing sizeBytes`,
+      'PROTOCOL',
+    );
+  }
+  return {
+    type: widgetTypeFor(item.mimeType),
+    name: item.mediaId,
+    md5: item.checksumMd5,
+    size: item.sizeBytes,
+    duration: item.durationMs,
+    url: item.url,
+    zIndex: 0,
+    layout: { x: 0, y: 0, width: screenW, height: screenH },
+  };
 }

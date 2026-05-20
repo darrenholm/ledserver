@@ -88,6 +88,10 @@ export const publicRentals = {
     fd.append('file', file);
     return api<ArtworkUploadResponse>(`/public/rentals/${id}/artwork`, { formData: fd });
   },
+  pay: (id: string, token: string, cardBrand?: string, cardLast4?: string) =>
+    api<{ ok: boolean; chargeId: string; status: string }>(`/public/rentals/${id}/pay`, {
+      body: { token, cardBrand, cardLast4 },
+    }),
   status: (id: string) => api<PublicRentalStatus>(`/public/rentals/${id}`),
 };
 

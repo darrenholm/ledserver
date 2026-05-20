@@ -8,6 +8,7 @@ import { query, withTx } from '../db';
 import { config } from '../config';
 import { probeArtwork } from '../services/artworkValidation';
 import { newRentalEmail, sendEmail } from '../services/email';
+import { chargeViaShopApi, ShopApiError } from '../services/shopApiClient';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -269,6 +270,84 @@ router.post('/rentals/:id/artwork', upload.single('file'), async (req, res) => {
     dimensions: probe.widthPx && probe.heightPx ? { width: probe.widthPx, height: probe.heightPx } : null,
     artworkUrl: publicUrl,
   });
+});
+
+// --- Payment (charges card via shop-api bridge) ---
+
+const paySchema = z.object({
+  token: z.string().min(8).max(200),
+  /** Card metadata returned by tokenize, stored on the rental for the renter's reference. */
+  cardBrand: z.string().max(40).optional(),
+  cardLast4: z.string().max(8).optional(),
+});
+
+router.post('/rentals/:id/pay', async (req, res) => {
+  const data = paySchema.parse(req.body);
+  const { rows } = await query<{
+    id: string;
+    status: string;
+    amount_cents: number;
+    currency: string;
+    advertiser_email: string;
+    advertiser_name: string;
+    device_name: string;
+    paid_at: string | null;
+  }>(
+    `SELECT r.id, r.status, r.amount_cents, r.currency, r.advertiser_email,
+            r.advertiser_name, r.paid_at, d.name AS device_name
+       FROM rentals r JOIN devices d ON d.id = r.device_id
+      WHERE r.id = $1`,
+    [req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'rental not found' });
+    return;
+  }
+  const rental = rows[0];
+  if (rental.status !== 'pending_payment') {
+    res.status(409).json({ error: `rental is ${rental.status}; cannot pay` });
+    return;
+  }
+
+  try {
+    const charge = await chargeViaShopApi({
+      token: data.token,
+      amount: rental.amount_cents / 100, // shop-api expects dollars
+      currency: rental.currency,
+      description: `LED ad rental on ${rental.device_name} (${rental.id})`,
+      requestId: rental.id,             // idempotency: same rental id never double-charges
+    });
+
+    await query(
+      `UPDATE rentals
+          SET payment_provider = 'quickbooks',
+              payment_reference = $1,
+              paid_at = NOW(),
+              status = 'pending_review',
+              updated_at = NOW(),
+              advertiser_notes = COALESCE(advertiser_notes, '') ||
+                CASE WHEN COALESCE(advertiser_notes, '') = '' THEN '' ELSE E'\n' END ||
+                'Card: ' || COALESCE($2, '?') || ' ****' || COALESCE($3, '?')
+        WHERE id = $4`,
+      [charge.charge_id, data.cardBrand ?? charge.card_brand ?? null, data.cardLast4 ?? charge.card_last4 ?? null, rental.id],
+    );
+
+    // Notify Holm Graphics admin so they can review the artwork.
+    void sendNewRentalNotification(rental.id).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.error('sendNewRentalNotification failed:', e);
+    });
+
+    res.json({ ok: true, chargeId: charge.charge_id, status: 'pending_review' });
+  } catch (err) {
+    if (err instanceof ShopApiError) {
+      // 402 = card declined; 503 = bridge not configured; everything else gets generic 502.
+      const status = err.status === 402 ? 402 : err.status === 503 ? 503 : 502;
+      res.status(status).json({ error: 'coex', code: 'PAYMENT', message: err.message });
+      return;
+    }
+    throw err;
+  }
 });
 
 // --- Status (renter-facing) ---

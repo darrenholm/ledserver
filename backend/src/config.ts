@@ -125,6 +125,14 @@ export const config = {
       ? process.env.MEDIA_PUBLIC_BASE_URL.replace(/\/?files\/?$/, '').replace(/\/?$/, '')
       : 'http://localhost:8080'),
 
+  // Holm Graphics shop-api bridge (for QuickBooks Payments).
+  // The shop-api hosts the QB OAuth tokens and exposes /api/internal endpoints
+  // we call to tokenize cards and charge them.
+  shopApi: {
+    baseUrl: process.env.SHOP_API_BASE_URL ?? '',
+    bridgeSecret: process.env.LED_SHOP_BRIDGE_SECRET ?? '',
+  },
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

@@ -1,10 +1,32 @@
-import { ChangeEvent, useEffect, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { publicRentals } from '../api/endpoints';
 import type { PublicRentalStatus } from '../types';
 
 function fmtMoney(cents: number, currency: string): string {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency }).format(cents / 100);
+}
+
+/**
+ * Tokenize card details by calling shop-api's public tokenize endpoint directly.
+ * Card data NEVER passes through the LED server — it goes straight from the
+ * browser to shop-api, which forwards to Intuit and drops the plaintext.
+ */
+async function tokenizeCard(
+  shopApiBaseUrl: string,
+  body: { number: string; exp: string; cvc?: string; zip: string; name?: string },
+): Promise<{ token: string; brand?: string; last4?: string }> {
+  const res = await fetch(`${shopApiBaseUrl.replace(/\/$/, '')}/api/internal/tokenize-public`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) {
+    throw new Error((data as { error?: string })?.error ?? `Tokenize failed (${res.status})`);
+  }
+  return data;
 }
 
 const STATUS_COPY: Record<string, { label: string; tone: 'info' | 'good' | 'bad' }> = {
@@ -17,12 +39,24 @@ const STATUS_COPY: Record<string, { label: string; tone: 'info' | 'good' | 'bad'
   cancelled: { label: 'Cancelled', tone: 'bad' },
 };
 
+interface CardFormState {
+  number: string;
+  exp: string;
+  cvc: string;
+  zip: string;
+  name: string;
+}
+const EMPTY_CARD: CardFormState = { number: '', exp: '', cvc: '', zip: '', name: '' };
+
 export default function RentOrder() {
   const { id } = useParams<{ id: string }>();
   const [order, setOrder] = useState<PublicRentalStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [card, setCard] = useState<CardFormState>(EMPTY_CARD);
+  const [paying, setPaying] = useState(false);
+  const shopApiBaseUrl = import.meta.env.VITE_SHOP_API_BASE_URL ?? '';
 
   const refresh = () => {
     if (!id) return;
@@ -56,6 +90,33 @@ export default function RentOrder() {
     }
   };
 
+  const onPay = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!id) return;
+    if (!shopApiBaseUrl) {
+      setErr('Payment temporarily unavailable (shop-api URL not configured)');
+      return;
+    }
+    setPaying(true);
+    setErr(null);
+    try {
+      const tok = await tokenizeCard(shopApiBaseUrl, {
+        number: card.number,
+        exp: card.exp,
+        cvc: card.cvc || undefined,
+        zip: card.zip,
+        name: card.name || undefined,
+      });
+      await publicRentals.pay(id, tok.token, tok.brand, tok.last4);
+      setCard(EMPTY_CARD);
+      refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPaying(false);
+    }
+  };
+
   if (!order) {
     return (
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '40px 24px' }}>
@@ -67,6 +128,7 @@ export default function RentOrder() {
 
   const tone = STATUS_COPY[order.status] ?? { label: order.status, tone: 'info' as const };
   const allowUpload = ['pending_payment', 'pending_review'].includes(order.status);
+  const needsPayment = order.status === 'pending_payment';
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '40px 24px' }}>
@@ -156,10 +218,72 @@ export default function RentOrder() {
         <h3 style={{ marginTop: 0 }}>2. Payment</h3>
         {order.paid_at ? (
           <div>✓ Payment received {new Date(order.paid_at).toLocaleDateString()}</div>
-        ) : (
+        ) : needsPayment && shopApiBaseUrl ? (
+          <form onSubmit={onPay} className="stack" style={{ gap: 12 }}>
+            <div className="muted" style={{ fontSize: 13 }}>
+              Charged via QuickBooks Payments. Card details go directly to Intuit — Holm Graphics never sees the raw number.
+            </div>
+            <div>
+              <label>Name on card</label>
+              <input
+                value={card.name}
+                onChange={(e) => setCard({ ...card, name: e.target.value })}
+                autoComplete="cc-name"
+              />
+            </div>
+            <div>
+              <label>Card number</label>
+              <input
+                value={card.number}
+                onChange={(e) => setCard({ ...card, number: e.target.value })}
+                inputMode="numeric"
+                autoComplete="cc-number"
+                placeholder="4242 4242 4242 4242"
+                required
+              />
+            </div>
+            <div className="row" style={{ gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label>Expiry (MM/YY)</label>
+                <input
+                  value={card.exp}
+                  onChange={(e) => setCard({ ...card, exp: e.target.value })}
+                  inputMode="numeric"
+                  autoComplete="cc-exp"
+                  placeholder="MM/YY"
+                  required
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>CVC</label>
+                <input
+                  value={card.cvc}
+                  onChange={(e) => setCard({ ...card, cvc: e.target.value })}
+                  inputMode="numeric"
+                  autoComplete="cc-csc"
+                  placeholder="123"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Postal code</label>
+                <input
+                  value={card.zip}
+                  onChange={(e) => setCard({ ...card, zip: e.target.value })}
+                  autoComplete="postal-code"
+                  required
+                />
+              </div>
+            </div>
+            <button type="submit" disabled={paying}>
+              {paying ? 'Processing…' : `Pay ${fmtMoney(order.amount_cents, order.currency)}`}
+            </button>
+          </form>
+        ) : needsPayment ? (
           <div className="muted">
             A Holm Graphics team member will contact <strong>{order.advertiser_email}</strong> within one business day to take payment and confirm your booking.
           </div>
+        ) : (
+          <div className="muted">Payment step skipped (status: {order.status})</div>
         )}
       </div>
 

@@ -1,25 +1,43 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import { query, withTx } from '../db';
 import { authRequired, requireOrgRole } from '../middleware/auth';
 import { coexRegistry } from '../coex/registry';
 import { writeLog } from '../services/logs';
 import { orgClause, orgForInsert } from '../services/scope';
-import { PlaylistManifest } from '../coex/types';
+import { PlaylistManifest, CoexError } from '../coex/types';
 
-const MEDIA_DIR = path.join('/app', 'media', 'uploads');
-
-function md5File(filepath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('md5');
-    const stream = fs.createReadStream(filepath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-    stream.on('error', reject);
-  });
+// VNNOX widget payloads need lowercase MD5. We fetch the file from its
+// storage_url (the same URL VNNOX itself will download from) so this
+// works regardless of whether media lives on a local volume, S3, or a
+// CDN — and if the URL isn't reachable, we surface a clear error
+// instead of failing the deploy with an opaque 500.
+async function md5FromUrl(url: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new CoexError(
+      `media unreachable at ${url}: ${(err as Error).message}. Check MEDIA_PUBLIC_BASE_URL and that the file still exists.`,
+      'UNREACHABLE',
+      err,
+    );
+  }
+  if (!res.ok) {
+    throw new CoexError(
+      `media unreachable at ${url} (HTTP ${res.status}). The file may have been lost on container redeploy, or MEDIA_PUBLIC_BASE_URL is misconfigured.`,
+      'UNREACHABLE',
+    );
+  }
+  if (!res.body) {
+    throw new CoexError(`media fetch returned empty body for ${url}`, 'UNREACHABLE');
+  }
+  const hash = crypto.createHash('md5');
+  for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
 }
 
 const router = Router();
@@ -188,7 +206,6 @@ interface DeployRow {
   pl_org_id: string;
   pl_loop: boolean;
   media_id: string;
-  media_filename: string;
   storage_url: string;
   mime_type: string;
   duration_ms: number;
@@ -216,7 +233,6 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
         p.organization_id AS pl_org_id,
         p.loop AS pl_loop,
         m.id AS media_id,
-        m.filename AS media_filename,
         m.storage_url,
         m.mime_type,
         pi.duration_ms,
@@ -251,12 +267,11 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
     return;
   }
   // VNNOX widget payloads require lowercase MD5. Backfill any media row missing it
-  // by re-hashing the file on disk, then persist so we only ever do this once per row.
+  // by fetching from storage_url, then persist so we only ever do this once per row.
   if (first.d_provider === 'vnnox') {
     for (const r of rows) {
       if (r.checksum_md5) continue;
-      const filepath = path.join(MEDIA_DIR, r.media_filename);
-      const md5 = await md5File(filepath);
+      const md5 = await md5FromUrl(r.storage_url);
       r.checksum_md5 = md5;
       await query(`UPDATE media SET checksum_md5 = $1 WHERE id = $2`, [md5, r.media_id]);
     }

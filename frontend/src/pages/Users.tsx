@@ -11,6 +11,7 @@ export default function Users() {
   const [invites, setInvites] = useState<UserInvite[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [warn, setWarn] = useState<string | null>(null);
 
   // Invite form
   const [inviteEmail, setInviteEmail] = useState('');
@@ -36,12 +37,21 @@ export default function Users() {
     e.preventDefault();
     setErr(null);
     setInfo(null);
+    setWarn(null);
     setInviting(true);
+    const targetEmail = inviteEmail.trim();
     try {
-      await usersApi.invite({ email: inviteEmail.trim(), role: inviteRole });
+      const result = await usersApi.invite({ email: targetEmail, role: inviteRole });
       setInviteEmail('');
       setInviteRole('org_operator');
-      setInfo(`Invitation sent to ${inviteEmail.trim()}.`);
+      if (result.emailDelivered) {
+        setInfo(`Invitation sent to ${targetEmail}.`);
+      } else {
+        setWarn(
+          `Invitation created for ${targetEmail}, but the email could NOT be delivered: ${result.emailError ?? 'unknown error'}. ` +
+            `Fix the email config (RESEND_API_KEY / MAIL_FROM domain verification) then click Resend on this invite.`,
+        );
+      }
       refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -52,9 +62,17 @@ export default function Users() {
 
   const onResend = async (i: UserInvite) => {
     setErr(null);
+    setInfo(null);
+    setWarn(null);
     try {
-      await usersApi.resendInvite(i.id);
-      setInfo(`Re-sent invitation to ${i.email}. The previous link is no longer valid.`);
+      const result = await usersApi.resendInvite(i.id);
+      if (result.emailDelivered) {
+        setInfo(`Re-sent invitation to ${i.email}. The previous link is no longer valid.`);
+      } else {
+        setWarn(
+          `Token was rotated for ${i.email}, but the email could NOT be delivered: ${result.emailError ?? 'unknown error'}.`,
+        );
+      }
       refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -118,6 +136,14 @@ export default function Users() {
       </div>
 
       {err && <div className="error-banner">{err}</div>}
+      {warn && (
+        <div
+          className="error-banner"
+          style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
+        >
+          {warn}
+        </div>
+      )}
       {info && <div className="success-banner">{info}</div>}
 
       <div className="card">

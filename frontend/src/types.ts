@@ -124,6 +124,17 @@ export interface UserInvite {
   accepted_at: string | null;
 }
 
+/**
+ * Returned from POST /users/invites and POST /users/invites/:id/resend.
+ * Carries the same fields as UserInvite plus the live email-delivery
+ * outcome from the most recent send (not persisted, only meaningful on
+ * the immediate response).
+ */
+export interface UserInviteSendResult extends UserInvite {
+  emailDelivered: boolean;
+  emailError?: string;
+}
+
 export interface InviteLookup {
   email: string;
   role: Role;

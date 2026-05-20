@@ -11,19 +11,25 @@ interface SendArgs {
   replyTo?: string;
 }
 
+export interface EmailResult {
+  ok: boolean;
+  /** Human-readable reason when ok=false. Safe to surface in admin-only UI. */
+  error?: string;
+}
+
 /**
- * Send an email via Resend. If RESEND_API_KEY isn't configured, the call is
- * logged and resolves successfully — useful for local dev and for shipping
- * before the production key is wired up.
+ * Send an email via Resend. Returns ok=false (without throwing) when the
+ * RESEND_API_KEY is missing or Resend rejects the send, so callers can
+ * surface the failure to admins instead of silently creating orphan rows.
  */
-export async function sendEmail({ to, subject, html, text, replyTo }: SendArgs): Promise<void> {
+export async function sendEmail({ to, subject, html, text, replyTo }: SendArgs): Promise<EmailResult> {
   if (!resend) {
     // eslint-disable-next-line no-console
     console.log(`[email] (no RESEND_API_KEY set) → to=${Array.isArray(to) ? to.join(',') : to} subject="${subject}"`);
-    return;
+    return { ok: false, error: 'RESEND_API_KEY is not configured on the server' };
   }
   try {
-    await resend.emails.send({
+    const result = await resend.emails.send({
       from: config.email.fromAddress,
       to: Array.isArray(to) ? to : [to],
       subject,
@@ -31,9 +37,21 @@ export async function sendEmail({ to, subject, html, text, replyTo }: SendArgs):
       text,
       replyTo,
     });
+    // Resend's SDK returns { data, error } — when their API rejects the send
+    // (unverified domain, sandbox restrictions, etc.) the promise resolves
+    // with a non-null `error` rather than throwing.
+    if (result && (result as { error?: { message?: string } }).error) {
+      const msg = (result as { error: { message?: string } }).error.message ?? 'unknown Resend error';
+      // eslint-disable-next-line no-console
+      console.error('[email] send rejected by Resend:', msg);
+      return { ok: false, error: msg };
+    }
+    return { ok: true };
   } catch (err) {
+    const msg = (err as Error)?.message ?? String(err);
     // eslint-disable-next-line no-console
     console.error('[email] send failed:', err);
+    return { ok: false, error: msg };
   }
 }
 

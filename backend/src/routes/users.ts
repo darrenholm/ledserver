@@ -180,7 +180,7 @@ async function createAndSendInvite(opts: {
   inviterId: string;
   inviterName: string;
   organizationName: string;
-}): Promise<{ row: InviteRow; token: string }> {
+}): Promise<{ row: InviteRow; token: string; emailDelivered: boolean; emailError?: string }> {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 60 * 60 * 1000);
@@ -199,9 +199,9 @@ async function createAndSendInvite(opts: {
     token,
     expiresAt,
   });
-  await sendEmail({ to: opts.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+  const result = await sendEmail({ to: opts.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 
-  return { row: rows[0], token };
+  return { row: rows[0], token, emailDelivered: result.ok, emailError: result.error };
 }
 
 router.get('/invites', requireOrgRole('org_admin'), async (req, res) => {
@@ -227,7 +227,7 @@ router.post('/invites', requireOrgRole('org_admin'), async (req, res) => {
   }
 
   try {
-    const { row } = await createAndSendInvite({
+    const { row, emailDelivered, emailError } = await createAndSendInvite({
       orgId,
       email: data.email,
       role: data.role,
@@ -235,7 +235,7 @@ router.post('/invites', requireOrgRole('org_admin'), async (req, res) => {
       inviterName: req.user!.username,
       organizationName: orgRes.rows[0].name,
     });
-    res.status(201).json(row);
+    res.status(201).json({ ...row, emailDelivered, emailError });
   } catch (err) {
     // Unique-index violation = there's already a pending invite for this email
     if ((err as { code?: string }).code === '23505') {
@@ -278,9 +278,9 @@ router.post('/invites/:id/resend', requireOrgRole('org_admin'), async (req, res)
     token,
     expiresAt,
   });
-  await sendEmail({ to: old.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+  const sendResult = await sendEmail({ to: old.email, subject: tpl.subject, html: tpl.html, text: tpl.text });
 
-  res.json(rows[0]);
+  res.json({ ...rows[0], emailDelivered: sendResult.ok, emailError: sendResult.error });
 });
 
 router.delete('/invites/:id', requireOrgRole('org_admin'), async (req, res) => {

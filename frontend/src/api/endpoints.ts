@@ -18,6 +18,7 @@ import type {
   Role,
   SignupResponse,
   UserInvite,
+  UserInviteSendResult,
 } from '../types';
 
 export const auth = {
@@ -41,8 +42,9 @@ export const users = {
   remove: (id: string) => api<void>(`/users/${id}`, { method: 'DELETE' }),
   listInvites: () => api<UserInvite[]>('/users/invites'),
   invite: (data: { email: string; role: Role }) =>
-    api<UserInvite>('/users/invites', { body: data }),
-  resendInvite: (id: string) => api<UserInvite>(`/users/invites/${id}/resend`, { method: 'POST' }),
+    api<UserInviteSendResult>('/users/invites', { body: data }),
+  resendInvite: (id: string) =>
+    api<UserInviteSendResult>(`/users/invites/${id}/resend`, { method: 'POST' }),
   revokeInvite: (id: string) => api<void>(`/users/invites/${id}`, { method: 'DELETE' }),
 };
 

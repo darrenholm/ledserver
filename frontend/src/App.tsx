@@ -11,6 +11,7 @@ import Playlists from './pages/Playlists';
 import PlaylistDetail from './pages/PlaylistDetail';
 import Logs from './pages/Logs';
 import Organizations from './pages/Organizations';
+import Users from './pages/Users';
 import Rent from './pages/Rent';
 import RentDisplay from './pages/RentDisplay';
 import RentOrder from './pages/RentOrder';
@@ -29,6 +30,14 @@ function RequireSuperAdmin({ children }: { children: JSX.Element }) {
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== 'super_admin') return <Navigate to="/" replace />;
+  return children;
+}
+
+function RequireOrgAdmin({ children }: { children: JSX.Element }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'super_admin' && user.role !== 'org_admin') return <Navigate to="/" replace />;
   return children;
 }
 
@@ -61,6 +70,14 @@ export default function App() {
           <Route path="playlists" element={<Playlists />} />
           <Route path="playlists/:id" element={<PlaylistDetail />} />
           <Route path="logs" element={<Logs />} />
+          <Route
+            path="users"
+            element={
+              <RequireOrgAdmin>
+                <Users />
+              </RequireOrgAdmin>
+            }
+          />
           <Route
             path="organizations"
             element={

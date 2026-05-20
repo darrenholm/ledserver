@@ -13,6 +13,7 @@ import playlistsRouter from './routes/playlists';
 import mediaRouter from './routes/media';
 import logsRouter from './routes/logs';
 import orgsRouter from './routes/organizations';
+import usersRouter from './routes/users';
 import publicRentalsRouter from './routes/publicRentals';
 import rentalsRouter from './routes/rentals';
 
@@ -50,6 +51,7 @@ export function createApp(): express.Express {
   const api = express.Router();
   api.use('/auth', authRouter);
   api.use('/organizations', orgsRouter);
+  api.use('/users', usersRouter);
   api.use('/devices', devicesRouter);
   api.use('/playlists', playlistsRouter);
   api.use('/media', mediaRouter);

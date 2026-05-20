@@ -7,12 +7,14 @@ import type {
   DeviceStatus,
   LogEntry,
   LoginResponse,
+  ManagedUser,
   Media,
   Organization,
   Playlist,
   PublicRentalStatus,
   RentableDisplay,
   RentableDisplayDetail,
+  Role,
   SignupResponse,
 } from '../types';
 
@@ -21,6 +23,15 @@ export const auth = {
     api<LoginResponse>('/auth/login', { body: { username, password } }),
   signup: (organizationName: string, username: string, password: string) =>
     api<SignupResponse>('/auth/signup', { body: { organizationName, username, password } }),
+};
+
+export const users = {
+  list: () => api<ManagedUser[]>('/users'),
+  create: (data: { username: string; password: string; role: Role }) =>
+    api<ManagedUser>('/users', { body: data }),
+  update: (id: string, data: { password?: string; role?: Role }) =>
+    api<ManagedUser>(`/users/${id}`, { method: 'PATCH', body: data }),
+  remove: (id: string) => api<void>(`/users/${id}`, { method: 'DELETE' }),
 };
 
 export const organizations = {

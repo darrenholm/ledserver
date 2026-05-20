@@ -17,13 +17,17 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const isSuperAdmin = user?.role === 'super_admin';
-  const nav = isSuperAdmin
-    ? [
-        ...NAV_BASE,
-        { to: '/rentals', label: 'Ad rentals', end: false },
-        { to: '/organizations', label: 'Organizations', end: false },
-      ]
-    : NAV_BASE;
+  const canManageUsers = isSuperAdmin || user?.role === 'org_admin';
+  const nav = [
+    ...NAV_BASE,
+    ...(canManageUsers ? [{ to: '/users', label: 'Users', end: false }] : []),
+    ...(isSuperAdmin
+      ? [
+          { to: '/rentals', label: 'Ad rentals', end: false },
+          { to: '/organizations', label: 'Organizations', end: false },
+        ]
+      : []),
+  ];
 
   const scopeId = getOrgScope();
   const [scopeOrg, setScopeOrg] = useState<Organization | null>(null);

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { devices as devicesApi, media as mediaApi, playlists as playlistsApi } from '../api/endpoints';
+import { ThumbnailStrip } from '../components/Thumbnail';
 import type { Device, Media, Playlist } from '../types';
 
 export default function Playlists() {
@@ -127,6 +128,7 @@ export default function Playlists() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Preview</th>
               <th>Loop</th>
               <th>Updated</th>
               <th style={{ width: 260 }}></th>
@@ -137,6 +139,9 @@ export default function Playlists() {
               <tr key={p.id}>
                 <td>
                   <Link to={`/playlists/${p.id}`}>{p.name}</Link>
+                </td>
+                <td>
+                  <ThumbnailStrip items={p.thumbnails ?? []} size={48} max={4} />
                 </td>
                 <td>{p.loop ? 'yes' : 'no'}</td>
                 <td className="muted">{new Date(p.updated_at).toLocaleString()}</td>
@@ -153,7 +158,7 @@ export default function Playlists() {
             ))}
             {list.length === 0 && (
               <tr>
-                <td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                   No playlists yet.
                 </td>
               </tr>

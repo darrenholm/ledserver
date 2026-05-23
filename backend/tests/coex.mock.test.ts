@@ -26,7 +26,7 @@ describe('MockCoexController', () => {
     await m.pushPlaylist({
       playlistId: 'pl-1',
       loop: true,
-      items: [{ mediaId: 'm1', url: 'http://x/u1.mp4', mimeType: 'video/mp4', durationMs: 5000 }],
+      items: [{ mediaId: 'm1', url: 'http://x/u1.mp4', mimeType: 'video/mp4', durationMs: 5000, sizeBytes: 1024 }],
     });
     await m.play('pl-1');
     expect(m.state.currentPlaylistId).toBe('pl-1');

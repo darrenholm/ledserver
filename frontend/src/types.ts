@@ -66,6 +66,12 @@ export interface Media {
   created_at: string;
 }
 
+export interface PlaylistThumbnail {
+  storage_url: string;
+  thumbnail_url: string | null;
+  mime_type: string;
+}
+
 export interface Playlist {
   id: string;
   organization_id: string;
@@ -75,6 +81,8 @@ export interface Playlist {
   created_at: string;
   updated_at: string;
   items?: PlaylistItem[];
+  /** Inline previews of the first few items, returned by GET /api/playlists. */
+  thumbnails?: PlaylistThumbnail[];
 }
 
 export interface PlaylistItem {

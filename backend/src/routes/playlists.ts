@@ -79,13 +79,52 @@ const createSchema = z.object({
 
 const updateSchema = createSchema.partial();
 
+interface ThumbnailRow {
+  playlist_id: string;
+  position: number;
+  storage_url: string;
+  thumbnail_url: string | null;
+  mime_type: string;
+}
+
+const THUMBS_PER_PLAYLIST = 4;
+
 router.get('/', async (req, res) => {
   const { clause, params } = orgClause(req, 'organization_id', 1);
   const { rows } = await query<PlaylistRow>(
     `SELECT * FROM playlists WHERE 1=1 ${clause} ORDER BY updated_at DESC`,
     params,
   );
-  res.json(rows);
+
+  // Batch-fetch a few preview items per playlist so the list view can show
+  // thumbnails without N+1 queries. Pulls all items for the listed playlists
+  // and trims to THUMBS_PER_PLAYLIST per id on the JS side.
+  let thumbsByPlaylist = new Map<string, { storage_url: string; thumbnail_url: string | null; mime_type: string }[]>();
+  if (rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    const { rows: tRows } = await query<ThumbnailRow>(
+      `SELECT pi.playlist_id, pi.position, m.storage_url, m.thumbnail_url, m.mime_type
+         FROM playlist_items pi
+         JOIN media m ON m.id = pi.media_id
+        WHERE pi.playlist_id = ANY($1::uuid[])
+        ORDER BY pi.playlist_id, pi.position`,
+      [ids],
+    );
+    for (const t of tRows) {
+      const arr = thumbsByPlaylist.get(t.playlist_id) ?? [];
+      if (arr.length < THUMBS_PER_PLAYLIST) {
+        arr.push({ storage_url: t.storage_url, thumbnail_url: t.thumbnail_url, mime_type: t.mime_type });
+      }
+      thumbsByPlaylist.set(t.playlist_id, arr);
+    }
+  }
+
+  res.json(
+    rows.map((r) => ({
+      ...r,
+      thumbnails: thumbsByPlaylist.get(r.id) ?? [],
+    })),
+  );
 });
 
 router.get('/:id', async (req, res) => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { devices as devicesApi, media as mediaApi, playlists as playlistsApi } from '../api/endpoints';
+import { Thumbnail } from '../components/Thumbnail';
 import type { Device, Media, Playlist, PlaylistItem } from '../types';
 
 interface EditableItem {
@@ -207,6 +208,7 @@ export default function PlaylistDetail() {
             <thead>
               <tr>
                 <th style={{ width: 40 }}>#</th>
+                <th style={{ width: 72 }}>Preview</th>
                 <th>Media</th>
                 <th style={{ width: 180 }}>Duration (ms)</th>
                 <th style={{ width: 140 }}></th>
@@ -218,6 +220,13 @@ export default function PlaylistDetail() {
                 return (
                   <tr key={it.mediaId + i}>
                     <td>{i + 1}</td>
+                    <td>
+                      {m ? (
+                        <Thumbnail m={m} size={56} />
+                      ) : (
+                        <span className="muted" style={{ fontSize: 12 }}>—</span>
+                      )}
+                    </td>
                     <td>
                       {m ? (
                         <>

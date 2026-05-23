@@ -1,6 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import { media as mediaApi } from '../api/endpoints';
 import { useAuth } from '../auth';
+import { Thumbnail } from '../components/Thumbnail';
 import type { Media } from '../types';
 
 function fmtSize(b: number): string {
@@ -8,52 +9,6 @@ function fmtSize(b: number): string {
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
   return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-const THUMB_BOX: React.CSSProperties = {
-  width: 80,
-  height: 60,
-  borderRadius: 4,
-  background: 'var(--surface-2, #1f2937)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  overflow: 'hidden',
-  fontSize: 11,
-  color: 'var(--text-muted, #9ca3af)',
-};
-
-function Thumbnail({ m }: { m: Media }) {
-  const src = m.thumbnail_url ?? m.storage_url;
-  if (m.mime_type.startsWith('image/')) {
-    return (
-      <div style={THUMB_BOX}>
-        <img
-          src={src}
-          alt=""
-          loading="lazy"
-          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-        />
-      </div>
-    );
-  }
-  if (m.mime_type.startsWith('video/')) {
-    return (
-      <div style={THUMB_BOX}>
-        <video
-          src={m.storage_url}
-          preload="metadata"
-          muted
-          playsInline
-          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-        />
-      </div>
-    );
-  }
-  if (m.mime_type.startsWith('audio/')) {
-    return <div style={THUMB_BOX}>audio</div>;
-  }
-  return <div style={THUMB_BOX}>file</div>;
 }
 
 export default function MediaPage() {

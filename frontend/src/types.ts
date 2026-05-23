@@ -41,6 +41,10 @@ export interface Device {
   weekly_rate: string | null;
   monthly_rate: string | null;
   rental_currency: string;
+  // Marketing (shown on holmgraphics.ca/advertise)
+  photos: string[];
+  traffic_stat: string | null;
+  description: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -47,6 +47,22 @@ export function createApp(): express.Express {
     res.json({ status: 'ok', ts: new Date().toISOString() });
   });
 
+  // Public marketplace endpoints are hit cross-origin from holmgraphics.ca's
+  // SvelteKit pages, so they need their own permissive CORS allowlist
+  // regardless of how `CORS_ALLOWED_ORIGINS` is configured for the admin app.
+  const publicCorsOrigins = [
+    'https://holmgraphics.ca',
+    'https://www.holmgraphics.ca',
+    'http://localhost:5173',                            // SvelteKit dev default
+    'http://localhost:5174',
+    'http://localhost:8080',
+    ...allowedOrigins,                                  // env-supplied extras
+  ];
+  const publicCors = cors({
+    origin: publicCorsOrigins,
+    credentials: false,
+  });
+
   // --- API routes (mounted under /api) ---
   const api = express.Router();
   api.use('/auth', authRouter);
@@ -57,7 +73,7 @@ export function createApp(): express.Express {
   api.use('/media', mediaRouter);
   api.use('/logs', logsRouter);
   api.use('/rentals', rentalsRouter);                  // super_admin + token-link approve/reject
-  api.use('/public', publicRentalsRouter);             // no-auth public marketplace endpoints
+  api.use('/public', publicCors, publicRentalsRouter); // no-auth public marketplace endpoints
   app.use('/api', api);
 
   // --- Public media (Taurus controllers HTTP-pull from here) ---

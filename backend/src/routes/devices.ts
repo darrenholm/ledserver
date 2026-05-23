@@ -33,6 +33,9 @@ interface DeviceRow {
   brightness_offset_minutes: number;
   last_applied_brightness: number | null;
   last_applied_at: string | null;
+  photos: string[];
+  traffic_stat: string | null;
+  description: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -89,6 +92,10 @@ const updateSchema = z.object({
   weeklyRate: z.number().min(0).nullable().optional(),
   monthlyRate: z.number().min(0).nullable().optional(),
   rentalCurrency: z.string().min(3).max(3).optional(),
+  // Marketing (shown on holmgraphics.ca/advertise)
+  photos: z.array(z.string().url()).max(20).optional(),
+  trafficStat: z.string().max(200).nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -170,6 +177,9 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     weekly_rate: 'weeklyRate',
     monthly_rate: 'monthlyRate',
     rental_currency: 'rentalCurrency',
+    photos: 'photos',
+    traffic_stat: 'trafficStat',
+    description: 'description',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {

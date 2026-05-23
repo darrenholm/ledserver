@@ -67,12 +67,20 @@ interface RentableDeviceRow {
   monthly_rate: string | null;
   rental_currency: string;
   is_rentable: boolean;
+  latitude: string | null;
+  longitude: string | null;
+  photos: string[];
+  traffic_stat: string | null;
+  description: string | null;
 }
+
+const DISPLAY_SELECT = `id, name, model, location, width_px, height_px,
+            daily_rate, weekly_rate, monthly_rate, rental_currency, is_rentable,
+            latitude, longitude, photos, traffic_stat, description`;
 
 router.get('/displays', async (_req, res) => {
   const { rows } = await query<RentableDeviceRow>(
-    `SELECT id, name, model, location, width_px, height_px,
-            daily_rate, weekly_rate, monthly_rate, rental_currency, is_rentable
+    `SELECT ${DISPLAY_SELECT}
        FROM devices
       WHERE is_rentable = TRUE
       ORDER BY name`,
@@ -82,8 +90,7 @@ router.get('/displays', async (_req, res) => {
 
 router.get('/displays/:id', async (req, res) => {
   const { rows } = await query<RentableDeviceRow>(
-    `SELECT id, name, model, location, width_px, height_px,
-            daily_rate, weekly_rate, monthly_rate, rental_currency, is_rentable
+    `SELECT ${DISPLAY_SELECT}
        FROM devices
       WHERE id = $1 AND is_rentable = TRUE`,
     [req.params.id],

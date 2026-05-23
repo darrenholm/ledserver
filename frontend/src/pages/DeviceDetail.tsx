@@ -39,6 +39,23 @@ function deviceToDetailsForm(d: Device): DetailsFormState {
   };
 }
 
+interface MarketingFormState {
+  description: string;
+  trafficStat: string;
+  photos: string[];      // photo URLs (server-hosted)
+  photosText: string;    // newline-separated for the textarea editor
+}
+
+function deviceToMarketingForm(d: Device): MarketingFormState {
+  const photos = d.photos ?? [];
+  return {
+    description: d.description ?? '',
+    trafficStat: d.traffic_stat ?? '',
+    photos,
+    photosText: photos.join('\n'),
+  };
+}
+
 function deviceToRentalForm(d: Device): RentalFormState {
   return {
     isRentable: d.is_rentable,
@@ -77,6 +94,7 @@ export default function DeviceDetail() {
   const [rForm, setRForm] = useState<RentalFormState | null>(null);
   const [dForm, setDForm] = useState<DetailsFormState | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
+  const [mForm, setMForm] = useState<MarketingFormState | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -87,6 +105,7 @@ export default function DeviceDetail() {
         setBForm(deviceToBrightnessForm(d));
         setRForm(deviceToRentalForm(d));
         setDForm(deviceToDetailsForm(d));
+        setMForm(deviceToMarketingForm(d));
       })
       .catch((e) => setErr((e as Error).message));
   }, [id]);
@@ -106,7 +125,7 @@ export default function DeviceDetail() {
     };
   }, [bForm]);
 
-  if (!device || !bForm || !rForm || !dForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  if (!device || !bForm || !rForm || !dForm || !mForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -521,6 +540,83 @@ export default function DeviceDetail() {
             }
           >
             Save rental settings
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Marketing (public /advertise listing)</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          These show on holmgraphics.ca/advertise so prospects can pick a display.
+          Leave blank if you don't want the field shown.
+        </div>
+
+        <div>
+          <label>Description</label>
+          <textarea
+            rows={3}
+            value={mForm.description}
+            onChange={(e) => setMForm({ ...mForm, description: e.target.value })}
+            placeholder="One-paragraph blurb about this location and audience."
+          />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <label>Traffic / reach stat</label>
+          <input
+            value={mForm.trafficStat}
+            onChange={(e) => setMForm({ ...mForm, trafficStat: e.target.value })}
+            placeholder="Seen by ~50,000 vehicles/week"
+          />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <label>Photo URLs (one per line)</label>
+          <textarea
+            rows={3}
+            value={mForm.photosText}
+            onChange={(e) => setMForm({ ...mForm, photosText: e.target.value })}
+            placeholder="https://holmgraphics.ca/Images/LED_Sign_HHWalkerton.jpg"
+          />
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            Paste full HTTPS URLs to existing photos (holmgraphics.ca/Images/... etc).
+            The first image is the hero shown on the listing page.
+          </div>
+        </div>
+
+        {mForm.photos.length > 0 && (
+          <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {mForm.photos.map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt=""
+                style={{ width: 120, height: 90, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button
+            disabled={busy}
+            onClick={() =>
+              action(async () => {
+                const photos = mForm.photosText
+                  .split('\n')
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                const updated = await devicesApi.update(device.id, {
+                  description: mForm.description.trim() || null,
+                  trafficStat: mForm.trafficStat.trim() || null,
+                  photos,
+                } as any);
+                setDevice(updated);
+                setMForm(deviceToMarketingForm(updated));
+              })
+            }
+          >
+            Save marketing
           </button>
         </div>
       </div>

@@ -21,6 +21,24 @@ interface RentalFormState {
   currency: string;
 }
 
+interface DetailsFormState {
+  model: string;
+  firmware: string;
+  widthPx: string;
+  heightPx: string;
+  location: string;
+}
+
+function deviceToDetailsForm(d: Device): DetailsFormState {
+  return {
+    model: d.model ?? '',
+    firmware: d.firmware ?? '',
+    widthPx: d.width_px ? String(d.width_px) : '',
+    heightPx: d.height_px ? String(d.height_px) : '',
+    location: d.location ?? '',
+  };
+}
+
 function deviceToRentalForm(d: Device): RentalFormState {
   return {
     isRentable: d.is_rentable,
@@ -57,6 +75,8 @@ export default function DeviceDetail() {
   const [brightness, setBrightness] = useState(80);
   const [bForm, setBForm] = useState<BrightnessFormState | null>(null);
   const [rForm, setRForm] = useState<RentalFormState | null>(null);
+  const [dForm, setDForm] = useState<DetailsFormState | null>(null);
+  const [editingDetails, setEditingDetails] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -66,6 +86,7 @@ export default function DeviceDetail() {
         setDevice(d);
         setBForm(deviceToBrightnessForm(d));
         setRForm(deviceToRentalForm(d));
+        setDForm(deviceToDetailsForm(d));
       })
       .catch((e) => setErr((e as Error).message));
   }, [id]);
@@ -85,7 +106,7 @@ export default function DeviceDetail() {
     };
   }, [bForm]);
 
-  if (!device || !bForm || !rForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  if (!device || !bForm || !rForm || !dForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -144,15 +165,93 @@ export default function DeviceDetail() {
 
       <div className="row" style={{ gap: 16, alignItems: 'stretch' }}>
         <div className="card" style={{ flex: 1 }}>
-          <h3 style={{ marginTop: 0 }}>Device info</h3>
-          <div className="stack">
-            <div><span className="muted">Model:</span> {device.model ?? '—'}</div>
-            <div><span className="muted">Firmware:</span> {device.firmware ?? '—'}</div>
-            <div><span className="muted">Address:</span> {device.ip_address ? `${device.ip_address}:${device.port}` : '—'}</div>
-            <div><span className="muted">Device key:</span> <code>{device.device_key}</code></div>
-            <div><span className="muted">Location:</span> {device.location ?? '—'}</div>
-            <div><span className="muted">Resolution:</span> {device.width_px && device.height_px ? `${device.width_px}×${device.height_px}` : '—'}</div>
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>Device info</h3>
+            {!editingDetails ? (
+              <button className="secondary" onClick={() => setEditingDetails(true)} style={{ padding: '4px 10px', fontSize: 13 }}>
+                Edit
+              </button>
+            ) : null}
           </div>
+
+          {!editingDetails ? (
+            <div className="stack">
+              <div><span className="muted">Model:</span> {device.model ?? '—'}</div>
+              <div><span className="muted">Firmware:</span> {device.firmware ?? '—'}</div>
+              <div><span className="muted">Location:</span> {device.location ?? '—'}</div>
+              <div><span className="muted">Resolution:</span> {device.width_px && device.height_px ? `${device.width_px} × ${device.height_px}` : '—'}</div>
+              <div><span className="muted">Device key:</span> <code style={{ fontSize: 12 }}>{device.device_key}</code></div>
+              {device.provider === 'vnnox' && (
+                <div style={{ marginTop: 8 }}>
+                  <a href="https://us.vnnox.com" target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+                    Open in VNNOX console ↗
+                  </a>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    Firmware upgrades and capture aren't exposed via the public API — use VNNOX directly.
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="stack">
+              <div className="muted" style={{ fontSize: 12 }}>
+                These are local notes — VNNOX doesn't expose firmware/resolution via its public API, so we let you set them here.
+              </div>
+              <div>
+                <label>Model</label>
+                <input value={dForm.model} onChange={(e) => setDForm({ ...dForm, model: e.target.value })} placeholder="Taurus T30" />
+              </div>
+              <div>
+                <label>Firmware</label>
+                <input value={dForm.firmware} onChange={(e) => setDForm({ ...dForm, firmware: e.target.value })} placeholder="4.6.2.0201" />
+              </div>
+              <div>
+                <label>Location</label>
+                <input value={dForm.location} onChange={(e) => setDForm({ ...dForm, location: e.target.value })} placeholder="20 McNab St, Walkerton ON" />
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label>Width (px)</label>
+                  <input type="number" value={dForm.widthPx} onChange={(e) => setDForm({ ...dForm, widthPx: e.target.value })} placeholder="480" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Height (px)</label>
+                  <input type="number" value={dForm.heightPx} onChange={(e) => setDForm({ ...dForm, heightPx: e.target.value })} placeholder="240" />
+                </div>
+              </div>
+              <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setDForm(deviceToDetailsForm(device));
+                    setEditingDetails(false);
+                  }}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    action(async () => {
+                      const updated = await devicesApi.update(device.id, {
+                        model: dForm.model.trim() || null,
+                        firmware: dForm.firmware.trim() || null,
+                        location: dForm.location.trim() || null,
+                        widthPx: dForm.widthPx.trim() === '' ? null : parseInt(dForm.widthPx, 10),
+                        heightPx: dForm.heightPx.trim() === '' ? null : parseInt(dForm.heightPx, 10),
+                      } as any);
+                      setDevice(updated);
+                      setDForm(deviceToDetailsForm(updated));
+                      setEditingDetails(false);
+                    })
+                  }
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ flex: 1 }}>
@@ -210,7 +309,15 @@ export default function DeviceDetail() {
           </button>
         </div>
         <div style={{ marginTop: 16 }}>
-          <label>Brightness: {brightness}%</label>
+          <div className="row between" style={{ marginBottom: 4 }}>
+            <label style={{ margin: 0 }}>Brightness: {brightness}%</label>
+            {device.last_applied_brightness !== null && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                Last applied: {device.last_applied_brightness}%
+                {device.last_applied_at && ` · ${new Date(device.last_applied_at).toLocaleString()}`}
+              </span>
+            )}
+          </div>
           <div className="row" style={{ gap: 12 }}>
             <input
               type="range"
@@ -222,9 +329,14 @@ export default function DeviceDetail() {
             />
             <button
               disabled={busy}
-              onClick={() => action(() => devicesApi.setBrightness(device.id, brightness))}
+              onClick={() => action(async () => {
+                await devicesApi.setBrightness(device.id, brightness);
+                // refresh device row so the "Last applied" line updates
+                const fresh = await devicesApi.get(device.id);
+                setDevice(fresh);
+              })}
             >
-              Apply
+              Set brightness
             </button>
           </div>
         </div>

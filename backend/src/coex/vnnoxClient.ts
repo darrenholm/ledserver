@@ -50,6 +50,17 @@ interface PlayerOnlineStatus {
   lastOnlineTime?: string;
 }
 
+interface ScreenListItem {
+  sid: number;
+  name: string;
+  mac?: string;
+  sn: string;
+  address?: string;
+  status: number;                // 1 normal, 2 offline, 3 risky, 4 faulty
+  brightness?: number;           // 0-100
+  envBrightness?: number;
+}
+
 interface BatchResult {
   success: string[];
   fail: string[];
@@ -155,10 +166,30 @@ export class VnnoxCloudClient implements CoexTransport {
   }
 
   async getStatus(): Promise<DeviceStatus> {
+    // online/offline comes from the player API (fast, lightweight).
     const player = await this.findPlayer();
+
+    // brightness + MAC come from the screen list endpoint. We tolerate failure
+    // because (a) the screen list is "advanced" and may be 403 on lower tiers,
+    // and (b) we'd rather return online=true with brightness=0 than fail the
+    // whole status call.
+    let brightness = 0;
+    try {
+      const screens = await this.request<{ items: ScreenListItem[] }>(
+        'GET',
+        '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
+      );
+      const hit = screens.items?.find((s) => s.sn === this.sn);
+      if (hit && typeof hit.brightness === 'number') {
+        brightness = hit.brightness;
+      }
+    } catch {
+      // swallow — best-effort enrichment
+    }
+
     return {
       online: player.onlineStatus === 1,
-      brightness: 0,  // brightness lives on a different endpoint (running-status) — wire it in once verified
+      brightness,
     };
   }
 

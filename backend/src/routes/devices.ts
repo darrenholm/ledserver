@@ -265,6 +265,11 @@ router.post('/:id/brightness', requireOrgRole('org_admin', 'org_operator'), asyn
   }
   const client = coexRegistry.get(connInfoFor(device));
   await client.setBrightness(brightness);
+  // Mirror the scheduler's bookkeeping so the UI can show "Last applied".
+  await query(
+    `UPDATE devices SET last_applied_brightness = $1, last_applied_at = NOW(), updated_at = NOW() WHERE id = $2`,
+    [brightness, device.id],
+  );
   await writeLog('info', 'api', `brightness set to ${brightness}`, device.id, undefined, device.organization_id);
   res.json({ ok: true });
 });

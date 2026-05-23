@@ -7,6 +7,7 @@ import AcceptInvite from './pages/AcceptInvite';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
 import DeviceDetail from './pages/DeviceDetail';
+import DevicesBulkImport from './pages/DevicesBulkImport';
 import MediaPage from './pages/Media';
 import Playlists from './pages/Playlists';
 import PlaylistDetail from './pages/PlaylistDetail';
@@ -67,6 +68,14 @@ export default function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="devices" element={<Devices />} />
+          <Route
+            path="devices/bulk-import"
+            element={
+              <RequireSuperAdmin>
+                <DevicesBulkImport />
+              </RequireSuperAdmin>
+            }
+          />
           <Route path="devices/:id" element={<DeviceDetail />} />
           <Route path="media" element={<MediaPage />} />
           <Route path="playlists" element={<Playlists />} />

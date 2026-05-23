@@ -70,6 +70,23 @@ export const devices = {
     api<{ ok: boolean }>(`/devices/${id}/brightness`, { body: { brightness } }),
   reboot: (id: string) => api<{ ok: boolean }>(`/devices/${id}/reboot`, { method: 'POST' }),
   stop: (id: string) => api<{ ok: boolean }>(`/devices/${id}/stop`, { method: 'POST' }),
+  bulkImport: (rows: Array<{
+    name: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    location?: string | null;
+    trafficStat?: string | null;
+    description?: string | null;
+    photos?: string[];
+  }>) =>
+    api<{
+      matched: number;
+      unmatched: number;
+      errors: number;
+      matchedRows: { name: string; id: string }[];
+      unmatchedRows: string[];
+      errorRows: { name: string; error: string }[];
+    }>('/devices/bulk-import', { body: { rows } }),
 };
 
 export const media = {

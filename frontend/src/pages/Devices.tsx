@@ -66,9 +66,16 @@ export default function Devices() {
     <div className="stack">
       <div className="row between">
         <h1 style={{ margin: 0 }}>Devices</h1>
-        <button onClick={() => setShowForm(!showForm)}>
-          {showForm ? 'Cancel' : '+ Register device'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          {isSuperAdmin && (
+            <Link to="/devices/bulk-import">
+              <button className="secondary">Bulk import</button>
+            </Link>
+          )}
+          <button onClick={() => setShowForm(!showForm)}>
+            {showForm ? 'Cancel' : '+ Register device'}
+          </button>
+        </div>
       </div>
 
       {err && <div className="error-banner">{err}</div>}

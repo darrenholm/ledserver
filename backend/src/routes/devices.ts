@@ -151,6 +151,102 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), async (req, res) =
   res.status(201).json(rows[0]);
 });
 
+// --- Bulk import (CSV-friendly) ---
+//
+// Match each row by `name` (exact, within the current org scope) and apply
+// updates only to columns the caller provided. Designed for the CSV import
+// page: super-admin pastes a spreadsheet, we patch each existing device.
+//
+// Doesn't create new devices — keeps it safe by only touching rows whose
+// name matches something that already exists.
+
+const bulkRowSchema = z.object({
+  name: z.string().min(1),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  location: z.string().nullable().optional(),
+  trafficStat: z.string().max(200).nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
+  photos: z.array(z.string().url()).max(20).optional(),
+});
+
+const bulkImportSchema = z.object({
+  rows: z.array(bulkRowSchema).min(1).max(500),
+});
+
+router.post('/bulk-import', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const data = bulkImportSchema.parse(req.body);
+  const scope = req.orgScope;
+
+  // Field name → DB column mapping. Only these columns can be bulk-updated.
+  const colMap: Record<string, string> = {
+    latitude: 'latitude',
+    longitude: 'longitude',
+    location: 'location',
+    trafficStat: 'traffic_stat',
+    description: 'description',
+    photos: 'photos',
+  };
+
+  const matched: { name: string; id: string }[] = [];
+  const unmatched: string[] = [];
+  const errors: { name: string; error: string }[] = [];
+
+  for (const row of data.rows) {
+    try {
+      // Find candidates by exact name. Use ILIKE to be tolerant of stray whitespace.
+      const trimmed = row.name.trim();
+      const matchClause = scope
+        ? `WHERE name = $1 AND organization_id = $2`
+        : `WHERE name = $1`;
+      const matchParams = scope ? [trimmed, scope] : [trimmed];
+      const candidates = await query<{ id: string }>(
+        `SELECT id FROM devices ${matchClause}`,
+        matchParams,
+      );
+      if (candidates.rows.length === 0) {
+        unmatched.push(trimmed);
+        continue;
+      }
+      if (candidates.rows.length > 1) {
+        errors.push({ name: trimmed, error: `${candidates.rows.length} devices share this name; skipping for safety` });
+        continue;
+      }
+
+      // Build SET clause for whichever columns the caller provided.
+      const fields: string[] = [];
+      const values: unknown[] = [];
+      let i = 1;
+      for (const [key, col] of Object.entries(colMap)) {
+        if (Object.prototype.hasOwnProperty.call(row, key)) {
+          fields.push(`${col} = $${i++}`);
+          values.push((row as Record<string, unknown>)[key]);
+        }
+      }
+      if (fields.length === 0) {
+        // Nothing to patch — still count as matched.
+        matched.push({ name: trimmed, id: candidates.rows[0].id });
+        continue;
+      }
+      fields.push(`updated_at = NOW()`);
+      values.push(candidates.rows[0].id);
+      await query(`UPDATE devices SET ${fields.join(', ')} WHERE id = $${i}`, values);
+      matched.push({ name: trimmed, id: candidates.rows[0].id });
+    } catch (err) {
+      errors.push({ name: row.name, error: (err as Error).message });
+    }
+  }
+
+  res.json({
+    matched: matched.length,
+    unmatched: unmatched.length,
+    errors: errors.length,
+    matchedRows: matched,
+    unmatchedRows: unmatched,
+    errorRows: errors,
+  });
+});
+
 router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const data = updateSchema.parse(req.body);
   const fields: string[] = [];

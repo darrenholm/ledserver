@@ -70,6 +70,7 @@ export default function RentalDetail() {
   const canApprove = ['pending_review', 'approved'].includes(rental.status);
   const canReject = ['pending_review', 'approved'].includes(rental.status);
   const canMarkPaid = rental.status === 'pending_payment';
+  const canRepublish = ['approved', 'active'].includes(rental.status);
 
   return (
     <div className="stack">
@@ -108,6 +109,43 @@ export default function RentalDetail() {
           </div>
         </div>
       </div>
+
+      {canRepublish && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>On-screen status</h3>
+          <div className="stack">
+            {rental.published_at ? (
+              <div>
+                <span className="muted">Published to VNNOX:</span>{' '}
+                {new Date(rental.published_at).toLocaleString()}
+                {rental.vnnox_program_id && (
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
+                    (program {rental.vnnox_program_id})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="muted">Not yet published to the device.</div>
+            )}
+            {rental.publish_error && (
+              <div style={{ padding: 8, background: 'rgba(227, 93, 93, 0.12)', borderRadius: 6, fontSize: 13 }}>
+                <strong>Last publish error:</strong> {rental.publish_error}
+              </div>
+            )}
+            <div className="row" style={{ gap: 8 }}>
+              <button
+                disabled={busy}
+                onClick={() => action(() => rentalsApi.republish(rental.id))}
+              >
+                {rental.published_at ? 'Republish to device' : 'Publish to device now'}
+              </button>
+              <div className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>
+                Pushes (or refreshes) the VNNOX insertion program with the current run window and daypart.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Artwork</h3>

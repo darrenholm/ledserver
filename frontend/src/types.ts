@@ -230,6 +230,9 @@ export interface AdminRental extends PublicRentalStatus {
   device_location: string | null;
   artwork_url: string | null;
   artwork_mime: string | null;
+  vnnox_program_id: string | null;
+  published_at: string | null;
+  publish_error: string | null;
   created_at: string;
   updated_at: string;
 }

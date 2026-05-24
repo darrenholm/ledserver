@@ -4,6 +4,7 @@ import { query } from '../db';
 import { config } from '../config';
 import { authRequired, requireRole } from '../middleware/auth';
 import { rentalApprovedEmail, rentalRejectedEmail, sendEmail } from '../services/email';
+import { publishAd, unpublishAd } from '../services/vnnoxAdPublisher';
 import { countSlotConflicts, sendNewRentalNotification } from './publicRentals';
 
 const router = Router();
@@ -219,9 +220,126 @@ async function approveRental(
       endTime: r.end_time,
     });
     await sendEmail({ to: r.advertiser_email, subject: tmpl.subject, html: tmpl.html, text: tmpl.text });
-    // TODO: when VNNOX Media APIs are unlocked, publish the playlist to the device here.
+    // Publish the ad to VNNOX as an insertion program. Best-effort: a
+    // failure here doesn't roll back the approval — the admin can hit
+    // "Republish" from device detail to retry. The error is stored on
+    // rentals.publish_error so the admin queue can flag it.
+    void publishApprovedAdToVnnox(rentalId).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('vnnox publish failed for rental', rentalId, err);
+    });
   }
   return r ?? null;
+}
+
+/**
+ * Push an approved rental to VNNOX as an insertion program, then store the
+ * returned program ID on the rental. Called from approveRental and the
+ * manual Republish button.
+ *
+ * If the device isn't VNNOX-provider, or it has no SN configured, we record
+ * a publish_error and bail without throwing — those displays will be
+ * managed by hand for now.
+ */
+export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> {
+  const { rows } = await query<{
+    rental_id: string;
+    advertiser_name: string;
+    start_date: string;
+    end_date: string;
+    start_time: string;
+    end_time: string;
+    device_provider: string;
+    device_sn: string;
+    device_name: string;
+    ad_slot_seconds: number;
+    media_url: string | null;
+    media_mime: string | null;
+    media_size: string | null;     // bigint comes back as string
+    media_md5: string | null;
+    existing_program_id: string | null;
+  }>(
+    `SELECT r.id AS rental_id, r.advertiser_name,
+            r.start_date, r.end_date, r.start_time, r.end_time,
+            r.vnnox_program_id AS existing_program_id,
+            d.provider AS device_provider,
+            d.device_key AS device_sn,
+            d.name AS device_name,
+            d.ad_slot_seconds,
+            m.storage_url AS media_url,
+            m.mime_type   AS media_mime,
+            m.size_bytes  AS media_size,
+            m.checksum_md5 AS media_md5
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN media m ON m.id = r.media_id
+      WHERE r.id = $1`,
+    [rentalId],
+  );
+  if (rows.length === 0) return;
+  const x = rows[0];
+
+  if (x.device_provider !== 'vnnox') {
+    await query(
+      `UPDATE rentals SET publish_error = $1, updated_at = NOW() WHERE id = $2`,
+      [`device provider is "${x.device_provider}" — manual publish required`, rentalId],
+    );
+    return;
+  }
+  if (!x.media_url || !x.media_mime || !x.media_size) {
+    await query(
+      `UPDATE rentals SET publish_error = $1, updated_at = NOW() WHERE id = $2`,
+      ['no artwork uploaded — cannot publish', rentalId],
+    );
+    return;
+  }
+  if (!x.start_date || !x.end_date) {
+    await query(
+      `UPDATE rentals SET publish_error = $1, updated_at = NOW() WHERE id = $2`,
+      ['rental has no run window set', rentalId],
+    );
+    return;
+  }
+
+  // If a previous attempt already left a program on VNNOX, tear it down
+  // first so we don't end up with two copies. Swallow errors — if the
+  // delete fails, the create will either supersede or fail loudly.
+  if (x.existing_program_id) {
+    try { await unpublishAd(x.device_sn, x.existing_program_id); } catch { /* ignore */ }
+  }
+
+  try {
+    const result = await publishAd({
+      sn: x.device_sn,
+      name: `Ad: ${x.advertiser_name} (${rentalId.slice(0, 8)})`,
+      mediaUrl: x.media_url,
+      mediaMimeType: x.media_mime,
+      mediaSizeBytes: Number(x.media_size),
+      mediaMd5: x.media_md5,
+      slotSeconds: x.ad_slot_seconds || 6,
+      startDate: x.start_date,
+      endDate: x.end_date,
+      startTime: x.start_time,
+      endTime: x.end_time,
+    });
+    await query(
+      `UPDATE rentals
+          SET vnnox_program_id = $1,
+              published_at = NOW(),
+              publish_error = NULL,
+              status = 'active',
+              updated_at = NOW()
+        WHERE id = $2`,
+      [result.programId, rentalId],
+    );
+  } catch (err) {
+    const msg = (err as Error)?.message ?? String(err);
+    await query(
+      `UPDATE rentals SET publish_error = $1, updated_at = NOW() WHERE id = $2`,
+      [msg, rentalId],
+    );
+    throw err;
+  }
 }
 
 async function rejectRental(rentalId: string, reviewerId: string | null, notes: string | null): Promise<RentalRow | null> {
@@ -283,6 +401,32 @@ router.post('/:id/approve', authRequired, requireRole('super_admin'), async (req
     }
     throw err;
   }
+});
+
+/**
+ * Manual retry of the VNNOX publish for a single rental. Useful when the
+ * automatic publish at approval time fails (network blip, VNNOX 5xx,
+ * pending enterprise auth, etc.). Returns the updated rental row so the
+ * UI can refresh.
+ */
+router.post('/:id/republish', authRequired, requireRole('super_admin'), async (req, res) => {
+  try {
+    await publishApprovedAdToVnnox(req.params.id);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    res.status(502).json({ error: 'vnnox publish failed', message: msg });
+    return;
+  }
+  const { rows } = await query<RentalRow>(
+    `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            m.storage_url AS artwork_url, m.mime_type AS artwork_mime
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN media m ON m.id = r.media_id
+      WHERE r.id = $1`,
+    [req.params.id],
+  );
+  res.json(rows[0] ?? null);
 });
 
 router.post('/:id/reject', authRequired, requireRole('super_admin'), async (req, res) => {

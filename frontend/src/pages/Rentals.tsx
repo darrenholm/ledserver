@@ -79,6 +79,11 @@ export default function Rentals() {
                   }}>
                     {r.status.replace('_', ' ')}
                   </span>
+                  {r.publish_error && (
+                    <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 2 }} title={r.publish_error}>
+                      ⚠ publish failed
+                    </div>
+                  )}
                 </td>
                 <td>
                   <Link to={`/rentals/${r.id}`}>Review →</Link>

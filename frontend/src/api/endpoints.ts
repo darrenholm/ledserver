@@ -151,6 +151,7 @@ export const rentals = {
     api<AdminRental>(`/rentals/${id}/approve`, { body: opts ?? {} }),
   reject: (id: string, notes?: string) =>
     api<AdminRental>(`/rentals/${id}/reject`, { body: { notes } }),
+  republish: (id: string) => api<AdminRental>(`/rentals/${id}/republish`, { body: {} }),
 };
 
 export const logs = {

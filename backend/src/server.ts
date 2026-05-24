@@ -3,6 +3,7 @@ import { config } from './config';
 import { pool } from './db';
 import { coexRegistry } from './coex/registry';
 import { startScheduler, stopScheduler } from './services/brightnessScheduler';
+import { startRentalExpiryCron, stopRentalExpiryCron } from './services/rentalExpiry';
 
 async function main() {
   const app = createApp();
@@ -12,11 +13,13 @@ async function main() {
   });
 
   startScheduler();
+  startRentalExpiryCron();
 
   const shutdown = async (signal: string) => {
     // eslint-disable-next-line no-console
     console.log(`received ${signal}, shutting down`);
     stopScheduler();
+    stopRentalExpiryCron();
     server.close();
     await coexRegistry.closeAll();
     await pool.end();

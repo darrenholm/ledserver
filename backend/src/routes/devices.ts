@@ -36,6 +36,10 @@ interface DeviceRow {
   photos: string[];
   traffic_stat: string | null;
   description: string | null;
+  // Ad slot rotation config
+  max_ads: number;
+  ad_slot_seconds: number;
+  base_playlist_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -96,6 +100,10 @@ const updateSchema = z.object({
   photos: z.array(z.string().url()).max(20).optional(),
   trafficStat: z.string().max(200).nullable().optional(),
   description: z.string().max(2000).nullable().optional(),
+  // Ad slot rotation
+  maxAds: z.number().int().min(0).max(64).optional(),
+  adSlotSeconds: z.number().int().min(1).max(60).optional(),
+  basePlaylistId: z.string().uuid().nullable().optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -276,6 +284,9 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     photos: 'photos',
     traffic_stat: 'trafficStat',
     description: 'description',
+    max_ads: 'maxAds',
+    ad_slot_seconds: 'adSlotSeconds',
+    base_playlist_id: 'basePlaylistId',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {

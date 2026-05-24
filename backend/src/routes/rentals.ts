@@ -4,7 +4,7 @@ import { query } from '../db';
 import { config } from '../config';
 import { authRequired, requireRole } from '../middleware/auth';
 import { rentalApprovedEmail, rentalRejectedEmail, sendEmail } from '../services/email';
-import { sendNewRentalNotification } from './publicRentals';
+import { countSlotConflicts, sendNewRentalNotification } from './publicRentals';
 
 const router = Router();
 
@@ -142,21 +142,46 @@ function endDateForDuration(start: string, durationDays: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Sentinel returned when the picked run window would exceed the device's max_ads. */
+class SlotCapacityError extends Error {
+  constructor(public readonly slotsBooked: number, public readonly maxSlots: number) {
+    super(`slot capacity exceeded: ${slotsBooked}/${maxSlots} slots already booked for this window`);
+  }
+}
+
 async function approveRental(
   rentalId: string,
   reviewerId: string | null,
   notes: string | null,
   startDateOverride: string | null,
 ): Promise<RentalRow | null> {
-  // Look up duration_days so we can compute end_date.
-  const dRes = await query<{ duration_days: number }>(
-    `SELECT duration_days FROM rentals WHERE id = $1`,
+  // Look up duration_days, daypart, and device's slot capacity so we can
+  // (a) compute the end_date and (b) refuse to overbook.
+  const dRes = await query<{
+    duration_days: number;
+    start_time: string;
+    end_time: string;
+    device_id: string;
+    max_ads: number;
+  }>(
+    `SELECT r.duration_days, r.start_time, r.end_time, r.device_id, d.max_ads
+       FROM rentals r JOIN devices d ON d.id = r.device_id
+      WHERE r.id = $1`,
     [rentalId],
   );
   if (dRes.rows.length === 0) return null;
-  const durationDays = dRes.rows[0].duration_days || 1;
+  const { duration_days, start_time, end_time, device_id, max_ads } = dRes.rows[0];
+  const durationDays = duration_days || 1;
   const startDate = startDateOverride ?? new Date().toISOString().slice(0, 10);
   const endDate = endDateForDuration(startDate, durationDays);
+
+  // Capacity check: count other active rentals on this device whose date
+  // ranges AND time-of-day windows overlap ours. Exclude ourselves so
+  // re-approving an already-approved rental doesn't trip the check.
+  const conflicts = await countSlotConflicts(device_id, startDate, endDate, start_time, end_time, rentalId);
+  if (conflicts >= max_ads) {
+    throw new SlotCapacityError(conflicts, max_ads);
+  }
 
   const { rows } = await query<RentalRow & { device_name: string; artwork_url: string | null }>(
     `UPDATE rentals
@@ -238,12 +263,26 @@ async function rejectRental(rentalId: string, reviewerId: string | null, notes: 
 
 router.post('/:id/approve', authRequired, requireRole('super_admin'), async (req, res) => {
   const data = reviewBodySchema.parse(req.body);
-  const r = await approveRental(req.params.id, req.user!.sub, data.notes ?? null, data.startDate ?? null);
-  if (!r) {
-    res.status(404).json({ error: 'not found or wrong status' });
-    return;
+  try {
+    const r = await approveRental(req.params.id, req.user!.sub, data.notes ?? null, data.startDate ?? null);
+    if (!r) {
+      res.status(404).json({ error: 'not found or wrong status' });
+      return;
+    }
+    res.json(r);
+  } catch (err) {
+    if (err instanceof SlotCapacityError) {
+      res.status(409).json({
+        error: 'slot capacity exceeded',
+        code: 'SLOT_FULL',
+        slotsBooked: err.slotsBooked,
+        maxSlots: err.maxSlots,
+        message: `This display has ${err.maxSlots} ad slots and all are booked at the requested time window. Pick a different start date or daypart.`,
+      });
+      return;
+    }
+    throw err;
   }
-  res.json(r);
 });
 
 router.post('/:id/reject', authRequired, requireRole('super_admin'), async (req, res) => {

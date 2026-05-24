@@ -45,6 +45,10 @@ export interface Device {
   photos: string[];
   traffic_stat: string | null;
   description: string | null;
+  // Ad slot rotation
+  max_ads: number;
+  ad_slot_seconds: number;
+  base_playlist_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -177,6 +181,8 @@ export interface RentableDisplay {
   monthly_rate: string | null;
   rental_currency: string;
   is_rentable: boolean;
+  max_ads?: number;
+  ad_slot_seconds?: number;
 }
 
 export interface RentableDisplayDetail extends RentableDisplay {

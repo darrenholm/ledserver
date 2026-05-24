@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import SunCalc from 'suncalc';
-import { devices as devicesApi } from '../api/endpoints';
-import type { Device, DeviceStatus } from '../types';
+import { devices as devicesApi, playlists as playlistsApi } from '../api/endpoints';
+import type { Device, DeviceStatus, Playlist } from '../types';
 
 interface BrightnessFormState {
   autoBrightnessEnabled: boolean;
@@ -19,6 +19,20 @@ interface RentalFormState {
   weeklyRate: string;
   monthlyRate: string;
   currency: string;
+}
+
+interface SlotsFormState {
+  maxAds: string;
+  adSlotSeconds: string;
+  basePlaylistId: string; // "" means none
+}
+
+function deviceToSlotsForm(d: Device): SlotsFormState {
+  return {
+    maxAds: String(d.max_ads ?? 8),
+    adSlotSeconds: String(d.ad_slot_seconds ?? 6),
+    basePlaylistId: d.base_playlist_id ?? '',
+  };
 }
 
 interface DetailsFormState {
@@ -95,6 +109,8 @@ export default function DeviceDetail() {
   const [dForm, setDForm] = useState<DetailsFormState | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
   const [mForm, setMForm] = useState<MarketingFormState | null>(null);
+  const [sForm, setSForm] = useState<SlotsFormState | null>(null);
+  const [orgPlaylists, setOrgPlaylists] = useState<Playlist[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -106,8 +122,12 @@ export default function DeviceDetail() {
         setRForm(deviceToRentalForm(d));
         setDForm(deviceToDetailsForm(d));
         setMForm(deviceToMarketingForm(d));
+        setSForm(deviceToSlotsForm(d));
       })
       .catch((e) => setErr((e as Error).message));
+    // Playlists for the base-rotation picker. Best-effort: if it fails, the
+    // dropdown just shows "(none)".
+    playlistsApi.list().then(setOrgPlaylists).catch(() => undefined);
   }, [id]);
 
   const sunPreview = useMemo(() => {
@@ -125,7 +145,7 @@ export default function DeviceDetail() {
     };
   }, [bForm]);
 
-  if (!device || !bForm || !rForm || !dForm || !mForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  if (!device || !bForm || !rForm || !dForm || !mForm || !sForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -540,6 +560,84 @@ export default function DeviceDetail() {
             }
           >
             Save rental settings
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Ad slot rotation</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Each customer ad gets one slot in the rotation. All active ads play in series
+          alongside the base playlist (the regular rotation that runs between ads).
+        </div>
+
+        <div className="row" style={{ gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label>Max concurrent ads</label>
+            <input
+              value={sForm.maxAds}
+              onChange={(e) => setSForm({ ...sForm, maxAds: e.target.value })}
+              placeholder="8"
+              inputMode="numeric"
+            />
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Bookings beyond this are refused at approval. 0–64.
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Slot length (seconds)</label>
+            <input
+              value={sForm.adSlotSeconds}
+              onChange={(e) => setSForm({ ...sForm, adSlotSeconds: e.target.value })}
+              placeholder="6"
+              inputMode="numeric"
+            />
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              How long each ad plays per rotation pass. Shown to customers as "buy a {sForm.adSlotSeconds}s slot".
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <label>Base content playlist</label>
+          <select
+            value={sForm.basePlaylistId}
+            onChange={(e) => setSForm({ ...sForm, basePlaylistId: e.target.value })}
+          >
+            <option value="">(none — ads only)</option>
+            {orgPlaylists.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            Plays between ads. Pick the playlist you'd normally run on this screen.
+          </div>
+        </div>
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button
+            disabled={busy}
+            onClick={() =>
+              action(async () => {
+                const maxAds = parseInt(sForm.maxAds, 10);
+                const adSlotSeconds = parseInt(sForm.adSlotSeconds, 10);
+                if (!Number.isFinite(maxAds) || maxAds < 0 || maxAds > 64) {
+                  throw new Error('Max ads must be between 0 and 64.');
+                }
+                if (!Number.isFinite(adSlotSeconds) || adSlotSeconds < 1 || adSlotSeconds > 60) {
+                  throw new Error('Slot length must be between 1 and 60 seconds.');
+                }
+                const updated = await devicesApi.update(device.id, {
+                  maxAds,
+                  adSlotSeconds,
+                  basePlaylistId: sForm.basePlaylistId || null,
+                } as any);
+                setDevice(updated);
+                setSForm(deviceToSlotsForm(updated));
+              })
+            }
+          >
+            Save ad slot config
           </button>
         </div>
       </div>

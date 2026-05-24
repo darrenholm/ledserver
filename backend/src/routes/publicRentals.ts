@@ -97,10 +97,11 @@ interface RentableDeviceRow {
 
 const DISPLAY_SELECT = `id, name, model, location, width_px, height_px,
             daily_rate, weekly_rate, monthly_rate, rental_currency, is_rentable,
-            latitude, longitude, photos, traffic_stat, description`;
+            latitude, longitude, photos, traffic_stat, description,
+            max_ads, ad_slot_seconds`;
 
 router.get('/displays', async (_req, res) => {
-  const { rows } = await query<RentableDeviceRow>(
+  const { rows } = await query<RentableDeviceRow & { max_ads: number; ad_slot_seconds: number }>(
     `SELECT ${DISPLAY_SELECT}
        FROM devices
       WHERE is_rentable = TRUE
@@ -110,8 +111,11 @@ router.get('/displays', async (_req, res) => {
 });
 
 router.get('/displays/:id', async (req, res) => {
-  const { rows } = await query<RentableDeviceRow>(
-    `SELECT ${DISPLAY_SELECT}
+  const { rows } = await query<RentableDeviceRow & {
+    max_ads: number;
+    ad_slot_seconds: number;
+  }>(
+    `SELECT ${DISPLAY_SELECT}, max_ads, ad_slot_seconds
        FROM devices
       WHERE id = $1 AND is_rentable = TRUE`,
     [req.params.id],
@@ -124,10 +128,85 @@ router.get('/displays/:id', async (req, res) => {
   const booked = await query<{ start_date: string; end_date: string }>(
     `SELECT start_date, end_date FROM rentals
       WHERE device_id = $1 AND status IN ('pending_payment','pending_review','approved','active')
+        AND start_date IS NOT NULL AND end_date IS NOT NULL
       ORDER BY start_date`,
     [req.params.id],
   );
   res.json({ ...rows[0], bookedWindows: booked.rows });
+});
+
+/**
+ * Counts how many existing rentals (in the active pipeline) would overlap a
+ * proposed window. "Overlap" means BOTH the date range and the time-of-day
+ * range intersect — two ads can co-exist if their date ranges overlap but
+ * their dayparts don't (e.g. morning ad vs evening ad).
+ *
+ * Used both by the availability endpoint and by the approval flow.
+ */
+export async function countSlotConflicts(
+  deviceId: string,
+  startDate: string,
+  endDate: string,
+  startTime: string,
+  endTime: string,
+  excludeRentalId?: string,
+): Promise<number> {
+  const params: unknown[] = [deviceId, startDate, endDate, startTime, endTime];
+  let exclude = '';
+  if (excludeRentalId) {
+    params.push(excludeRentalId);
+    exclude = `AND r.id <> $6`;
+  }
+  const { rows } = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM rentals r
+      WHERE r.device_id = $1
+        AND r.status IN ('pending_review','approved','active')
+        AND r.start_date IS NOT NULL AND r.end_date IS NOT NULL
+        AND r.start_date <= $3::date
+        AND r.end_date   >= $2::date
+        AND r.start_time <  $5::time
+        AND r.end_time   >  $4::time
+        ${exclude}`,
+    params,
+  );
+  return Number(rows[0]?.n ?? '0');
+}
+
+const availabilityQuerySchema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
+  endDate:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
+  startTime: z.string().regex(timeRegex, 'expect HH:MM').optional(),
+  endTime:   z.string().regex(timeRegex, 'expect HH:MM').optional(),
+});
+
+router.get('/displays/:id/availability', async (req, res) => {
+  const q = availabilityQuerySchema.parse(req.query);
+  const dev = await query<{ max_ads: number; ad_slot_seconds: number }>(
+    `SELECT max_ads, ad_slot_seconds FROM devices WHERE id = $1 AND is_rentable = TRUE`,
+    [req.params.id],
+  );
+  if (dev.rows.length === 0) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const { max_ads, ad_slot_seconds } = dev.rows[0];
+
+  // If caller didn't give a window, just summarize CURRENT slot occupancy
+  // (today + all-day). Useful for the display detail page tease.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const startDate = q.startDate ?? todayISO;
+  const endDate   = q.endDate   ?? todayISO;
+  const startTime = q.startTime ?? '00:00:00';
+  const endTime   = q.endTime   ?? '23:59:59';
+
+  const slotsBooked = await countSlotConflicts(req.params.id, startDate, endDate, startTime, endTime);
+  res.json({
+    maxSlots: max_ads,
+    slotSeconds: ad_slot_seconds,
+    slotsBooked,
+    slotsAvailable: Math.max(0, max_ads - slotsBooked),
+    window: { startDate, endDate, startTime, endTime },
+  });
 });
 
 // --- Booking ---

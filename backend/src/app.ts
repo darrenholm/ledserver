@@ -76,9 +76,19 @@ export function createApp(): express.Express {
   api.use('/public', publicCors, publicRentalsRouter); // no-auth public marketplace endpoints
   app.use('/api', api);
 
-  // --- Public media (Taurus controllers HTTP-pull from here) ---
+  // --- Public media (Taurus controllers HTTP-pull from here, browsers on
+  //     holmgraphics.ca display artwork from here) ---
+  //
+  // Helmet's default Cross-Origin-Resource-Policy is `same-origin`, which
+  // blocks <img src="https://led.holmgraphics.ca/..."> on a page served from
+  // holmgraphics.ca. These uploads are intentionally public assets, so we
+  // explicitly relax CORP to `cross-origin` for this path.
   app.use(
     '/files/uploads',
+    (_req, res, next) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      next();
+    },
     express.static(MEDIA_FILES_DIR, {
       maxAge: '1h',
       fallthrough: false,

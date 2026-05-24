@@ -147,8 +147,8 @@ export const rentals = {
   get: (id: string) => api<AdminRental>(`/rentals/${id}`),
   markPaid: (id: string, reference: string, provider = 'manual') =>
     api<{ id: string; status: string }>(`/rentals/${id}/mark-paid`, { body: { reference, provider } }),
-  approve: (id: string, notes?: string) =>
-    api<AdminRental>(`/rentals/${id}/approve`, { body: { notes } }),
+  approve: (id: string, opts?: { notes?: string; startDate?: string }) =>
+    api<AdminRental>(`/rentals/${id}/approve`, { body: opts ?? {} }),
   reject: (id: string, notes?: string) =>
     api<AdminRental>(`/rentals/${id}/reject`, { body: { notes } }),
 };

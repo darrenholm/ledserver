@@ -8,7 +8,12 @@ import { query, withTx } from '../db';
 import { config } from '../config';
 import { probeArtwork } from '../services/artworkValidation';
 import { newRentalEmail, sendEmail } from '../services/email';
-import { chargeViaShopApi, ShopApiError } from '../services/shopApiClient';
+import {
+  chargeViaShopApi,
+  createProjectViaShopApi,
+  ShopApiError,
+  upsertClientViaShopApi,
+} from '../services/shopApiClient';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -48,10 +53,16 @@ const createRentalSchema = z.object({
   advertiserPhone: z.string().max(40).optional(),
   advertiserBusiness: z.string().max(120).optional(),
   advertiserNotes: z.string().max(2000).optional(),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD'),
   durationUnit: z.enum(['day', 'week', 'month']),
   durationCount: z.coerce.number().int().min(1).max(52),
 });
+
+function durationInDays(unit: 'day' | 'week' | 'month', count: number): number {
+  if (unit === 'day')   return count;
+  if (unit === 'week')  return count * 7;
+  if (unit === 'month') return count * 30;
+  return count;
+}
 
 // --- Listings ---
 
@@ -111,14 +122,6 @@ router.get('/displays/:id', async (req, res) => {
 
 // --- Booking ---
 
-function addDurationToDate(start: string, unit: 'day' | 'week' | 'month', count: number): string {
-  const d = new Date(start + 'T00:00:00Z');
-  if (unit === 'day') d.setUTCDate(d.getUTCDate() + count - 1);
-  else if (unit === 'week') d.setUTCDate(d.getUTCDate() + count * 7 - 1);
-  else if (unit === 'month') d.setUTCMonth(d.getUTCMonth() + count, d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
 function computeAmountCents(d: RentableDeviceRow, unit: 'day' | 'week' | 'month', count: number): number {
   const rateStr = unit === 'day' ? d.daily_rate : unit === 'week' ? d.weekly_rate : d.monthly_rate;
   if (!rateStr) {
@@ -144,31 +147,21 @@ router.post('/rentals', async (req, res) => {
     return;
   }
   const d = dev.rows[0];
-  const endDate = addDurationToDate(data.startDate, data.durationUnit, data.durationCount);
   const amountCents = computeAmountCents(d, data.durationUnit, data.durationCount);
+  const days = durationInDays(data.durationUnit, data.durationCount);
 
-  // Conflict check: any approved/active rental overlapping our window?
-  const conflict = await query(
-    `SELECT 1 FROM rentals
-      WHERE device_id = $1
-        AND status IN ('pending_payment','pending_review','approved','active')
-        AND start_date <= $3::date
-        AND end_date   >= $2::date
-      LIMIT 1`,
-    [data.deviceId, data.startDate, endDate],
-  );
-  if (conflict.rowCount > 0) {
-    res.status(409).json({ error: 'requested window overlaps an existing booking' });
-    return;
-  }
+  // No conflict check at booking — we don't know the run window until
+  // Holm Graphics approves and schedules it. The admin approval flow
+  // surfaces the device's currently-booked-through date so they can
+  // pick a sane start_date.
 
   const { rows } = await query<{ id: string; approval_token: string }>(
     `INSERT INTO rentals (
         device_id, advertiser_name, advertiser_email, advertiser_phone,
         advertiser_business, advertiser_notes,
-        start_date, end_date, duration_unit, duration_count,
+        duration_unit, duration_count, duration_days,
         amount_cents, currency, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, 'pending_payment')
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending_payment')
       RETURNING id, approval_token`,
     [
       data.deviceId,
@@ -177,10 +170,9 @@ router.post('/rentals', async (req, res) => {
       data.advertiserPhone ?? null,
       data.advertiserBusiness ?? null,
       data.advertiserNotes ?? null,
-      data.startDate,
-      endDate,
       data.durationUnit,
       data.durationCount,
+      days,
       amountCents,
       d.rental_currency,
     ],
@@ -189,12 +181,11 @@ router.post('/rentals', async (req, res) => {
   res.status(201).json({
     id: rows[0].id,
     status: 'pending_payment',
-    endDate,
+    durationDays: days,
     amountCents,
     currency: d.rental_currency,
-    // Phase 1: no actual payment URL — admin will manually mark as paid.
-    // Phase 2: replace with a QuickBooks Payments session URL.
-    paymentInstructions: 'A Holm Graphics team member will contact you within one business day to take payment and confirm your booking.',
+    paymentInstructions:
+      'Your run window will be scheduled by Holm Graphics once your artwork is approved. The clock starts on the day your ad goes live.',
   });
 });
 
@@ -297,11 +288,14 @@ router.post('/rentals/:id/pay', async (req, res) => {
     currency: string;
     advertiser_email: string;
     advertiser_name: string;
+    advertiser_business: string | null;
+    advertiser_phone: string | null;
     device_name: string;
     paid_at: string | null;
   }>(
     `SELECT r.id, r.status, r.amount_cents, r.currency, r.advertiser_email,
-            r.advertiser_name, r.paid_at, d.name AS device_name
+            r.advertiser_name, r.advertiser_business, r.advertiser_phone,
+            r.paid_at, d.name AS device_name
        FROM rentals r JOIN devices d ON d.id = r.device_id
       WHERE r.id = $1`,
     [req.params.id],
@@ -338,6 +332,34 @@ router.post('/rentals/:id/pay', async (req, res) => {
         WHERE id = $4`,
       [charge.charge_id, data.cardBrand ?? charge.card_brand ?? null, data.cardLast4 ?? charge.card_last4 ?? null, rental.id],
     );
+
+    // Surface the booking on the staff jobs board. Best-effort: any failure
+    // here logs and continues — the payment itself already succeeded and the
+    // rental row holds the source of truth.
+    void (async () => {
+      try {
+        const client = await upsertClientViaShopApi({
+          email: rental.advertiser_email,
+          name: rental.advertiser_name,
+          business: rental.advertiser_business ?? undefined,
+          phone: rental.advertiser_phone ?? undefined,
+        });
+        const project = await createProjectViaShopApi({
+          clientId: client.id,
+          description: `Ad rental: ${rental.advertiser_name} on ${rental.device_name}`,
+          contactName: rental.advertiser_name,
+          contactPhone: rental.advertiser_phone ?? undefined,
+          contactEmail: rental.advertiser_email,
+        });
+        await query(
+          `UPDATE rentals SET project_client_id = $1, project_id = $2, updated_at = NOW() WHERE id = $3`,
+          [client.id, project.id, rental.id],
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('job-board sync failed for rental', rental.id, e);
+      }
+    })();
 
     // Notify Holm Graphics admin so they can review the artwork.
     void sendNewRentalNotification(rental.id).catch((e) => {

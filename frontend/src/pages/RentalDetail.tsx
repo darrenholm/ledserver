@@ -13,6 +13,7 @@ export default function RentalDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notes, setNotes] = useState('');
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentRef, setPaymentRef] = useState('');
 
   const refresh = () => {
@@ -139,13 +140,36 @@ export default function RentalDetail() {
 
           {(canApprove || canReject) && (
             <div className="stack">
-              <label>Review notes (optional, included in the email)</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+              {canApprove && (
+                <div className="row" style={{ gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label>Run start date</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      min={new Date().toISOString().slice(0, 10)}
+                    />
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                      {(() => {
+                        const days = rental.duration_count * (rental.duration_unit === 'day' ? 1 : rental.duration_unit === 'week' ? 7 : 30);
+                        const end = new Date(startDate + 'T00:00:00Z');
+                        end.setUTCDate(end.getUTCDate() + days - 1);
+                        return `Ad will run ${days} day${days === 1 ? '' : 's'}, ending ${end.toISOString().slice(0, 10)}.`;
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div>
+                <label>Review notes (optional, included in the email)</label>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+              </div>
               <div className="row" style={{ gap: 8 }}>
                 {canApprove && (
                   <button
                     disabled={busy}
-                    onClick={() => action(() => rentalsApi.approve(rental.id, notes || undefined))}
+                    onClick={() => action(() => rentalsApi.approve(rental.id, { notes: notes || undefined, startDate }))}
                     style={{ background: 'var(--green)' }}
                   >
                     Approve &amp; notify advertiser

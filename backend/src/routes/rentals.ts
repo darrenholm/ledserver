@@ -125,19 +125,48 @@ router.post('/:id/mark-paid', authRequired, requireRole('super_admin'), async (r
 
 const reviewBodySchema = z.object({
   notes: z.string().max(2000).optional(),
+  /** Optional override; defaults to today if not provided. */
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
 });
 
-async function approveRental(rentalId: string, reviewerId: string | null, notes: string | null): Promise<RentalRow | null> {
+/**
+ * Given a duration in days and a start date, returns the inclusive end_date
+ * (e.g. 7 days starting 2026-01-01 → 2026-01-07).
+ */
+function endDateForDuration(start: string, durationDays: number): string {
+  const d = new Date(start + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + durationDays - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+async function approveRental(
+  rentalId: string,
+  reviewerId: string | null,
+  notes: string | null,
+  startDateOverride: string | null,
+): Promise<RentalRow | null> {
+  // Look up duration_days so we can compute end_date.
+  const dRes = await query<{ duration_days: number }>(
+    `SELECT duration_days FROM rentals WHERE id = $1`,
+    [rentalId],
+  );
+  if (dRes.rows.length === 0) return null;
+  const durationDays = dRes.rows[0].duration_days || 1;
+  const startDate = startDateOverride ?? new Date().toISOString().slice(0, 10);
+  const endDate = endDateForDuration(startDate, durationDays);
+
   const { rows } = await query<RentalRow & { device_name: string; artwork_url: string | null }>(
     `UPDATE rentals
         SET status = 'approved',
-            reviewed_by = $1,
+            start_date = $1::date,
+            end_date   = $2::date,
+            reviewed_by = $3,
             reviewed_at = NOW(),
-            review_notes = $2,
+            review_notes = $4,
             updated_at = NOW()
-      WHERE id = $3 AND status IN ('pending_review','approved')
+      WHERE id = $5 AND status IN ('pending_review','approved')
       RETURNING *`,
-    [reviewerId, notes, rentalId],
+    [startDate, endDate, reviewerId, notes, rentalId],
   );
   if (rows.length === 0) return null;
   // Hydrate device + artwork for the email.
@@ -204,7 +233,7 @@ async function rejectRental(rentalId: string, reviewerId: string | null, notes: 
 
 router.post('/:id/approve', authRequired, requireRole('super_admin'), async (req, res) => {
   const data = reviewBodySchema.parse(req.body);
-  const r = await approveRental(req.params.id, req.user!.sub, data.notes ?? null);
+  const r = await approveRental(req.params.id, req.user!.sub, data.notes ?? null, data.startDate ?? null);
   if (!r) {
     res.status(404).json({ error: 'not found or wrong status' });
     return;
@@ -240,7 +269,7 @@ router.get('/approve/:token', async (req, res) => {
     res.status(404).type('html').send(htmlPage('Not found', '<h2 class="err">Approval link invalid</h2><p>This rental may have already been processed.</p>'));
     return;
   }
-  const result = await approveRental(r.rows[0].id, null, null);
+  const result = await approveRental(r.rows[0].id, null, null, null);
   if (!result) {
     res.type('html').send(htmlPage('Already processed', '<h2>Already processed</h2><p>This rental has already been approved or is not in a reviewable state.</p>'));
     return;

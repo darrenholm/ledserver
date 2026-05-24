@@ -74,3 +74,75 @@ function safeJson(text: string): unknown {
     return text;
   }
 }
+
+// ─── Job-board bridge: client + project upsert ───────────────────────────────
+
+interface UpsertClientArgs {
+  email: string;
+  name?: string;
+  business?: string;
+  phone?: string;
+}
+
+interface UpsertClientResult {
+  id: number;
+  created: boolean;
+}
+
+export async function upsertClientViaShopApi(args: UpsertClientArgs): Promise<UpsertClientResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/upsert-client'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api upsert-client failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as UpsertClientResult;
+}
+
+interface CreateProjectArgs {
+  clientId: number;
+  description: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  statusId?: number;
+  projectTypeId?: number;
+  dueDate?: string;       // YYYY-MM-DD
+  poNumber?: string;
+}
+
+interface CreateProjectResult {
+  id: number;
+}
+
+export async function createProjectViaShopApi(args: CreateProjectArgs): Promise<CreateProjectResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/create-project'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api create-project failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as CreateProjectResult;
+}

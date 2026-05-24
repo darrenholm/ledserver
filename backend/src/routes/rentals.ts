@@ -19,10 +19,13 @@ interface RentalRow {
   advertiser_phone: string | null;
   advertiser_business: string | null;
   advertiser_notes: string | null;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
+  start_time: string;
+  end_time: string;
   duration_unit: string;
   duration_count: number;
+  duration_days: number;
   amount_cents: number;
   currency: string;
   payment_provider: string | null;
@@ -187,6 +190,8 @@ async function approveRental(
       deviceName: r.device_name,
       startDate: r.start_date,
       endDate: r.end_date,
+      startTime: r.start_time,
+      endTime: r.end_time,
     });
     await sendEmail({ to: r.advertiser_email, subject: tmpl.subject, html: tmpl.html, text: tmpl.text });
     // TODO: when VNNOX Media APIs are unlocked, publish the playlist to the device here.

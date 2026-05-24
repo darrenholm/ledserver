@@ -63,7 +63,14 @@ export default function Rentals() {
                   <div className="muted" style={{ fontSize: 12 }}>{r.advertiser_business || r.advertiser_email}</div>
                 </td>
                 <td>{r.device_name}</td>
-                <td className="muted" style={{ fontSize: 13 }}>{r.start_date} → {r.end_date}</td>
+                <td className="muted" style={{ fontSize: 13 }}>
+                  {r.start_date && r.end_date ? `${r.start_date} → ${r.end_date}` : <em>on approval</em>}
+                  {r.start_time && r.end_time && !(r.start_time.startsWith('00:00') && r.end_time.startsWith('23:5')) && (
+                    <div style={{ fontSize: 11 }}>
+                      Daily {r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
+                    </div>
+                  )}
+                </td>
                 <td>{fmtMoney(r.amount_cents, r.currency)}</td>
                 <td>
                   <span className="pill" style={{

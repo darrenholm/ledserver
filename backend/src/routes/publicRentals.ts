@@ -46,6 +46,8 @@ const upload = multer({
 
 // --- Schemas ---
 
+const timeRegex = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
+
 const createRentalSchema = z.object({
   deviceId: z.string().uuid(),
   advertiserName: z.string().min(1).max(120),
@@ -55,7 +57,15 @@ const createRentalSchema = z.object({
   advertiserNotes: z.string().max(2000).optional(),
   durationUnit: z.enum(['day', 'week', 'month']),
   durationCount: z.coerce.number().int().min(1).max(52),
-});
+  startTime: z.string().regex(timeRegex, 'expect HH:MM or HH:MM:SS').optional(),
+  endTime:   z.string().regex(timeRegex, 'expect HH:MM or HH:MM:SS').optional(),
+}).refine(
+  (d) => {
+    if (!d.startTime || !d.endTime) return true;
+    return d.endTime > d.startTime;
+  },
+  { message: 'endTime must be after startTime', path: ['endTime'] },
+);
 
 function durationInDays(unit: 'day' | 'week' | 'month', count: number): number {
   if (unit === 'day')   return count;
@@ -160,8 +170,11 @@ router.post('/rentals', async (req, res) => {
         device_id, advertiser_name, advertiser_email, advertiser_phone,
         advertiser_business, advertiser_notes,
         duration_unit, duration_count, duration_days,
-        amount_cents, currency, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending_payment')
+        amount_cents, currency, status,
+        start_time, end_time
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending_payment',
+                COALESCE($12::time, '00:00:00'::time),
+                COALESCE($13::time, '23:59:59'::time))
       RETURNING id, approval_token`,
     [
       data.deviceId,
@@ -175,6 +188,8 @@ router.post('/rentals', async (req, res) => {
       days,
       amountCents,
       d.rental_currency,
+      data.startTime ?? null,
+      data.endTime ?? null,
     ],
   );
 
@@ -387,8 +402,10 @@ router.get('/rentals/:id', async (req, res) => {
     status: string;
     advertiser_name: string;
     advertiser_email: string;
-    start_date: string;
-    end_date: string;
+    start_date: string | null;
+    end_date: string | null;
+    start_time: string;
+    end_time: string;
     amount_cents: number;
     currency: string;
     artwork_warnings: string[];
@@ -398,7 +415,8 @@ router.get('/rentals/:id', async (req, res) => {
     storage_url: string | null;
   }>(
     `SELECT r.id, r.status, r.advertiser_name, r.advertiser_email,
-            r.start_date, r.end_date, r.amount_cents, r.currency,
+            r.start_date, r.end_date, r.start_time, r.end_time,
+            r.amount_cents, r.currency,
             r.artwork_warnings, r.paid_at, r.review_notes,
             d.name AS device_name,
             m.storage_url

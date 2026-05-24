@@ -197,8 +197,10 @@ export interface PublicRentalStatus {
   status: RentalStatus;
   advertiser_name: string;
   advertiser_email: string;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
+  start_time: string;
+  end_time: string;
   amount_cents: number;
   currency: string;
   artwork_warnings: string[];
@@ -215,6 +217,7 @@ export interface AdminRental extends PublicRentalStatus {
   advertiser_notes: string | null;
   duration_unit: 'day' | 'week' | 'month';
   duration_count: number;
+  duration_days: number;
   payment_provider: string | null;
   payment_reference: string | null;
   media_id: string | null;

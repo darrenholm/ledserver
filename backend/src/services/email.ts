@@ -121,25 +121,50 @@ interface SimpleRentalArgs {
   rentalId: string;
   advertiserName: string;
   deviceName: string;
-  startDate: string;
-  endDate: string;
+  startDate: string | null;
+  endDate: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   notes?: string | null;
+}
+
+/** "14:30" or "14:30:00" → "2:30 PM" */
+function fmt12(t: string | null | undefined): string {
+  if (!t) return '';
+  const [hStr, mStr] = t.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  const am = h < 12;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const mm = m.toString().padStart(2, '0');
+  return `${h12}:${mm} ${am ? 'AM' : 'PM'}`;
+}
+
+function describeDaypart(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return '';
+  const s = start.slice(0, 5);
+  const e = end.slice(0, 5);
+  if (s === '00:00' && (e === '23:59' || e === '23:58')) return 'all day';
+  return `daily ${fmt12(start)}–${fmt12(end)}`;
 }
 
 export function rentalApprovedEmail(a: SimpleRentalArgs): { subject: string; html: string; text: string } {
   const statusUrl = `${config.publicBaseUrl}/rent/orders/${a.rentalId}`;
+  const window = a.startDate && a.endDate ? `${a.startDate} to ${a.endDate}` : 'the dates shown on your booking';
+  const daypart = describeDaypart(a.startTime, a.endTime);
+  const daypartHtml = daypart ? ` (${daypart})` : '';
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#111;line-height:1.4">
       <h2>Your ad is approved</h2>
       <p>Hi ${escapeHtml(a.advertiserName)},</p>
-      <p>Your artwork has been approved and will run on <strong>${escapeHtml(a.deviceName)}</strong> from <strong>${a.startDate}</strong> to <strong>${a.endDate}</strong>.</p>
+      <p>Your artwork has been approved and will run on <strong>${escapeHtml(a.deviceName)}</strong> from <strong>${window}</strong>${daypartHtml}.</p>
       <p><a href="${statusUrl}">View your booking</a></p>
     </div>
   `;
   return {
     subject: `Your ad on ${a.deviceName} is approved`,
     html,
-    text: `Your artwork is approved. It will run on ${a.deviceName} from ${a.startDate} to ${a.endDate}.\n${statusUrl}`,
+    text: `Your artwork is approved. It will run on ${a.deviceName} from ${window}${daypartHtml}.\n${statusUrl}`,
   };
 }
 

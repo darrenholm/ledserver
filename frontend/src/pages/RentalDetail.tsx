@@ -7,6 +7,26 @@ function fmtMoney(cents: number, currency: string): string {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency }).format(cents / 100);
 }
 
+/** "14:30" or "14:30:00" → "2:30 PM" */
+function fmt12(t: string | null | undefined): string {
+  if (!t) return '';
+  const [hStr, mStr] = t.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  const am = h < 12;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const mm = m.toString().padStart(2, '0');
+  return `${h12}:${mm} ${am ? 'AM' : 'PM'}`;
+}
+
+function describeDaypart(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return '—';
+  const s = start.slice(0, 5);
+  const e = end.slice(0, 5);
+  if (s === '00:00' && (e === '23:59' || e === '23:58')) return 'All day';
+  return `Daily ${fmt12(start)} – ${fmt12(end)}`;
+}
+
 export default function RentalDetail() {
   const { id } = useParams<{ id: string }>();
   const [rental, setRental] = useState<AdminRental | null>(null);
@@ -63,7 +83,8 @@ export default function RentalDetail() {
           <h3 style={{ marginTop: 0 }}>Booking</h3>
           <div className="stack">
             <div><span className="muted">Status:</span> {rental.status.replace('_', ' ')}</div>
-            <div><span className="muted">Window:</span> {rental.start_date} → {rental.end_date}</div>
+            <div><span className="muted">Window:</span> {rental.start_date && rental.end_date ? `${rental.start_date} → ${rental.end_date}` : 'scheduled on approval'}</div>
+            <div><span className="muted">Daypart:</span> {describeDaypart(rental.start_time, rental.end_time)}</div>
             <div><span className="muted">Duration:</span> {rental.duration_count} {rental.duration_unit}{rental.duration_count > 1 ? 's' : ''}</div>
             <div><span className="muted">Total:</span> {fmtMoney(rental.amount_cents, rental.currency)}</div>
             <div><span className="muted">Paid:</span> {rental.paid_at ? `${new Date(rental.paid_at).toLocaleDateString()} (${rental.payment_provider}: ${rental.payment_reference})` : '—'}</div>

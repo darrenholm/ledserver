@@ -128,9 +128,14 @@ router.post('/sso-from-shop', loginLimiter, async (req, res) => {
   // with any manually-created LED users that picked a different username.
   const ssoUsername = decoded.email.trim().toLowerCase();
 
-  // Find-or-create. Existing users keep whatever role they already had so
-  // an admin can downgrade a specific person via SQL without us re-promoting
-  // them on every login.
+  // Find-or-create + ensure super_admin role.
+  //
+  // Policy: every shop staff member who SSOs in gets super_admin on the LED
+  // app. That's the explicit ask — "allow all staff to access it at an admin
+  // level." For existing LED users (e.g. an early manual setup with a lower
+  // role) we PROMOTE them on next SSO so they don't have to file a ticket to
+  // upload artwork. If you ever need to keep someone permanently scoped down,
+  // remove their shop-api access — losing their staff JWT cuts SSO entirely.
   let userRow = (await query<UserRow>(
     `SELECT id, username, password_hash, role, organization_id
        FROM users WHERE username = $1`,
@@ -149,6 +154,20 @@ router.post('/sso-from-shop', loginLimiter, async (req, res) => {
       [ssoUsername, hash],
     );
     userRow = inserted.rows[0];
+  } else if (userRow.role !== 'super_admin' || userRow.organization_id !== null) {
+    // Existing user, but not at super_admin or scoped to an org. Promote
+    // them and detach from the org so the rest of the app treats them
+    // as a cross-tenant admin.
+    const promoted = await query<UserRow>(
+      `UPDATE users
+          SET role = 'super_admin',
+              organization_id = NULL,
+              updated_at = NOW()
+        WHERE id = $1
+       RETURNING id, username, password_hash, role, organization_id`,
+      [userRow.id],
+    );
+    userRow = promoted.rows[0];
   }
 
   const token = signToken({

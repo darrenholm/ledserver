@@ -233,7 +233,27 @@ export interface CreateAdContractBody {
   autoRenew?: boolean;
   billingContactEmail?: string;
   notes?: string;
-  attachRentalId?: string;
+  attachRentalIds?: string[];
+}
+
+export interface UnattachedRental {
+  id: string;
+  status: string;
+  advertiser_name: string;
+  advertiser_email: string;
+  advertiser_business: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  start_time: string;
+  end_time: string;
+  amount_cents: number;
+  currency: string;
+  duration_unit: string;
+  duration_count: number;
+  created_at: string;
+  media_id: string | null;
+  artwork_url: string | null;
+  artwork_mime: string | null;
 }
 
 export interface UpdateAdContractBody {
@@ -267,6 +287,8 @@ export const adContracts = {
     api<{ ok: true }>(`/ad-contracts/${contractId}/attach-rental`, { body: { rentalId } }),
   detachRental: (contractId: string, rentalId: string) =>
     api<void>(`/ad-contracts/${contractId}/detach-rental`, { body: { rentalId } }),
+  unattachedRentals: (deviceId: string) =>
+    api<UnattachedRental[]>(`/ad-contracts/unattached-rentals/${deviceId}`),
 };
 
 export const logs = {

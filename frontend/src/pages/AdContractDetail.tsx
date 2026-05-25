@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { adContracts as adContractsApi, type AdContract } from '../api/endpoints';
+import { adContracts as adContractsApi, type AdContract, type UnattachedRental } from '../api/endpoints';
 
 /**
  * Admin detail page for a single ad contract. Shows:
@@ -25,6 +25,10 @@ export default function AdContractDetail() {
   const [autoRenew, setAutoRenew] = useState(false);
   const [billingEmail, setBillingEmail] = useState('');
   const [notes, setNotes] = useState('');
+  // Attach-existing-ad picker state.
+  const [showAttach, setShowAttach] = useState(false);
+  const [available, setAvailable] = useState<UnattachedRental[]>([]);
+  const [attachBusy, setAttachBusy] = useState<string | null>(null); // rental id being attached
 
   useEffect(() => {
     if (!id) return;
@@ -60,6 +64,55 @@ export default function AdContractDetail() {
         notes: notes.trim() || null,
       });
       setContract({ ...contract, ...updated, rentals: contract.rentals });
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refreshContract = async () => {
+    if (!id) return;
+    const fresh = await adContractsApi.get(id);
+    setContract(fresh);
+  };
+
+  const openAttach = async () => {
+    if (!contract) return;
+    setShowAttach(true);
+    try {
+      const list = await adContractsApi.unattachedRentals(contract.device_id);
+      setAvailable(list);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const attach = async (rentalId: string) => {
+    if (!contract) return;
+    setAttachBusy(rentalId);
+    setErr(null);
+    try {
+      await adContractsApi.attachRental(contract.id, rentalId);
+      // Refresh both the contract (to show the new rental in the list) and
+      // the picker (to remove the now-attached rental from the available pool).
+      setAvailable((prev) => prev.filter((r) => r.id !== rentalId));
+      await refreshContract();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setAttachBusy(null);
+    }
+  };
+
+  const detach = async (rentalId: string) => {
+    if (!contract) return;
+    if (!confirm('Unlink this ad from the contract? The ad stays on the screen, but it won\'t be attributed to this client anymore.')) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await adContractsApi.detachRental(contract.id, rentalId);
+      await refreshContract();
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -242,7 +295,10 @@ export default function AdContractDetail() {
 
       {/* --- Ads (rentals) under this contract --- */}
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Ads under this contract</h3>
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Ads under this contract</h3>
+          <button onClick={openAttach} disabled={busy}>+ Attach existing ad</button>
+        </div>
         {!contract.rentals || contract.rentals.length === 0 ? (
           <div className="muted" style={{ fontSize: 13 }}>No ads attached yet.</div>
         ) : (
@@ -254,6 +310,7 @@ export default function AdContractDetail() {
                 <th>Daypart</th>
                 <th>Amount</th>
                 <th>Advertiser</th>
+                <th></th>
                 <th></th>
                 <th></th>
               </tr>
@@ -280,12 +337,81 @@ export default function AdContractDetail() {
                   <td>
                     <Link to={`/rentals/${r.id}`} style={{ fontSize: 13 }}>Open →</Link>
                   </td>
+                  <td>
+                    <button
+                      onClick={() => detach(r.id)}
+                      disabled={busy}
+                      style={{ fontSize: 12, padding: '2px 8px' }}
+                      title="Unlink from this contract (the ad keeps running, just isn't attributed)"
+                    >
+                      Detach
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {/* --- Attach existing ad picker --- */}
+      {showAttach && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setShowAttach(false)}
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 600, width: '90%', maxHeight: '90vh', overflowY: 'auto', background: 'white' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row between" style={{ marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>Attach existing ad</h3>
+              <button onClick={() => setShowAttach(false)}>✕</button>
+            </div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              Ads on this screen that aren't yet attributed to any contract. Click "Attach" to link an ad to this contract.
+            </div>
+            {available.length === 0 ? (
+              <div className="muted">No unattached ads on this screen.</div>
+            ) : (
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {available.map((r) => (
+                  <li key={r.id} style={{ padding: '10px 0', borderBottom: '1px solid #eee' }}>
+                    <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                      {r.artwork_url && r.artwork_mime?.startsWith('image/') && (
+                        <img
+                          src={r.artwork_url}
+                          alt=""
+                          style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }}
+                        />
+                      )}
+                      <div style={{ flex: 1, fontSize: 13 }}>
+                        <div><strong>{r.advertiser_name}</strong> {r.advertiser_business && <span className="muted">({r.advertiser_business})</span>}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {r.start_date && r.end_date ? `${r.start_date} → ${r.end_date}` : <em>unscheduled</em>}
+                          {' · '}{r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
+                          {' · '}${(r.amount_cents / 100).toFixed(2)} {r.currency}
+                          {' · '}<span style={{ fontStyle: 'italic' }}>{r.status}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => attach(r.id)}
+                        disabled={attachBusy !== null}
+                      >
+                        {attachBusy === r.id ? 'Attaching…' : 'Attach'}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

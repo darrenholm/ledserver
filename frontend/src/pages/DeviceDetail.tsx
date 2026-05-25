@@ -8,6 +8,7 @@ import {
   adContracts as adContractsApi,
   type AdContract,
   type ClientHit,
+  type UnattachedRental,
 } from '../api/endpoints';
 import type { Device, DeviceStatus, Playlist } from '../types';
 
@@ -1142,6 +1143,9 @@ function NewContractModal({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Existing ads on this screen that haven't been attributed to any contract.
+  const [available, setAvailable] = useState<UnattachedRental[]>([]);
+  const [attachIds, setAttachIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (q.trim().length < 2) {
@@ -1158,6 +1162,19 @@ function NewContractModal({
     }, 350);
     return () => clearTimeout(t);
   }, [q]);
+
+  // Pull the list of unattached rentals on this device when the modal opens.
+  useEffect(() => {
+    adContractsApi.unattachedRentals(deviceId).then(setAvailable).catch(() => setAvailable([]));
+  }, [deviceId]);
+
+  const toggleAttach = (id: string) => {
+    setAttachIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const submit = async () => {
     if (!picked) {
@@ -1180,6 +1197,7 @@ function NewContractModal({
         autoRenew,
         billingContactEmail: billingEmail.trim() || undefined,
         notes:              notes.trim() || undefined,
+        attachRentalIds:    attachIds.size > 0 ? Array.from(attachIds) : undefined,
       });
       await onCreated();
     } catch (e) {
@@ -1294,9 +1312,55 @@ function NewContractModal({
           <span>Auto-renew (mints a QBO invoice 30 days before end date — DORMANT until master switch is flipped)</span>
         </label>
 
+        {/* --- Attribute existing ads --- */}
+        {available.length > 0 && (
+          <div style={{ marginTop: 16, padding: 12, border: '1px solid #ddd', borderRadius: 4, background: '#f9fafb' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Attribute existing ads on this screen</div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              Tick any ads already running on this screen that belong to this contract.
+              They'll be linked to the contract on save.
+            </div>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: 220, overflowY: 'auto' }}>
+              {available.map((r) => (
+                <li key={r.id} style={{ padding: '6px 0', borderBottom: '1px solid #eee' }}>
+                  <label className="row" style={{ gap: 10, alignItems: 'center', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={attachIds.has(r.id)}
+                      onChange={() => toggleAttach(r.id)}
+                      style={{ width: 'auto' }}
+                    />
+                    {r.artwork_url && r.artwork_mime?.startsWith('image/') && (
+                      <img
+                        src={r.artwork_url}
+                        alt=""
+                        style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                    )}
+                    <div style={{ flex: 1, fontSize: 13 }}>
+                      <div><strong>{r.advertiser_name}</strong> {r.advertiser_business && <span className="muted">({r.advertiser_business})</span>}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {r.start_date && r.end_date ? `${r.start_date} → ${r.end_date}` : <em>unscheduled</em>}
+                        {' · '}
+                        {r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
+                        {' · '}
+                        ${(r.amount_cents / 100).toFixed(2)} {r.currency}
+                        {' · '}
+                        <span style={{ fontStyle: 'italic' }}>{r.status}</span>
+                      </div>
+                    </div>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button onClick={onClose} disabled={saving}>Cancel</button>
-          <button onClick={submit} disabled={saving || !picked}>{saving ? 'Saving…' : 'Create contract'}</button>
+          <button onClick={submit} disabled={saving || !picked}>
+            {saving ? 'Saving…' : attachIds.size > 0 ? `Create + attach ${attachIds.size} ad${attachIds.size === 1 ? '' : 's'}` : 'Create contract'}
+          </button>
         </div>
       </div>
     </div>

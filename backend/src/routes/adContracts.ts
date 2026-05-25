@@ -147,8 +147,8 @@ const createSchema = z.object({
   autoRenew: z.boolean().default(false),
   billingContactEmail: z.string().email().optional(),
   notes: z.string().max(2000).optional(),
-  /** Optionally attribute an existing rental to this contract on creation. */
-  attachRentalId: z.string().uuid().optional(),
+  /** Optionally attribute one or more existing rentals to this contract on creation. */
+  attachRentalIds: z.array(z.string().uuid()).max(64).optional(),
 }).refine(
   (d) => {
     if (d.contractType === 'owner_perpetual') {
@@ -198,15 +198,17 @@ router.post('/', requireRole('super_admin', 'org_admin'), async (req, res) => {
   );
   const contract = rows[0];
 
-  // If admin asked to attribute an existing ad in the same call, link it now.
-  if (data.attachRentalId) {
+  // If admin asked to attribute existing ads in the same call, link them now.
+  // device_id guard prevents linking a rental that lives on a different screen.
+  if (data.attachRentalIds && data.attachRentalIds.length > 0) {
     await query(
-      `UPDATE rentals SET contract_id = $1 WHERE id = $2 AND device_id = $3`,
-      [contract.id, data.attachRentalId, data.deviceId],
+      `UPDATE rentals SET contract_id = $1, updated_at = NOW()
+        WHERE id = ANY($2::uuid[]) AND device_id = $3`,
+      [contract.id, data.attachRentalIds, data.deviceId],
     );
-    // Now that the rental has a client link (via the contract), kick off a
-    // best-effort mirror of its current artwork into L:\<client>\LED Ads\.
-    void mirrorRentalArtwork(data.attachRentalId);
+    // Now that each rental has a client link (via the contract), kick off
+    // best-effort mirrors. Fire-and-forget; errors swallowed by the service.
+    for (const rid of data.attachRentalIds) void mirrorRentalArtwork(rid);
   }
 
   res.status(201).json(contract);
@@ -319,6 +321,40 @@ router.delete('/:id', requireRole('super_admin', 'org_admin'), async (req, res) 
     [req.params.id],
   );
   res.status(204).end();
+});
+
+// --- Unattached rentals picker (for "attribute existing ads" UI) ---
+//
+// Returns every rental on a device that doesn't yet belong to a contract.
+// Powers the attach pickers in the "Add contract" modal and on the
+// contract detail page. Scoped via the device's organization_id.
+
+router.get('/unattached-rentals/:deviceId', requireRole('super_admin', 'org_admin'), async (req, res) => {
+  // Confirm the caller can see this device before we list its rentals.
+  const { clause, params } = orgClause(req, 'organization_id', 2);
+  const dev = await query<{ id: string }>(
+    `SELECT id FROM devices WHERE id = $1 ${clause}`,
+    [req.params.deviceId, ...params],
+  );
+  if (dev.rows.length === 0) {
+    res.status(404).json({ error: 'device not found in your scope' });
+    return;
+  }
+  const { rows } = await query(
+    `SELECT r.id, r.status, r.advertiser_name, r.advertiser_email, r.advertiser_business,
+            r.start_date, r.end_date, r.start_time, r.end_time,
+            r.amount_cents, r.currency, r.duration_unit, r.duration_count,
+            r.created_at, r.media_id, r.fit_mode,
+            m.storage_url AS artwork_url, m.mime_type AS artwork_mime
+       FROM rentals r
+       LEFT JOIN media m ON m.id = r.media_id
+      WHERE r.device_id = $1
+        AND r.contract_id IS NULL
+        AND r.status IN ('approved', 'active', 'pending_review')
+      ORDER BY r.created_at DESC`,
+    [req.params.deviceId],
+  );
+  res.json(rows);
 });
 
 // --- Attach / detach rentals ---

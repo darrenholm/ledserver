@@ -16,6 +16,8 @@ import orgsRouter from './routes/organizations';
 import usersRouter from './routes/users';
 import publicRentalsRouter from './routes/publicRentals';
 import rentalsRouter from './routes/rentals';
+import adContractsRouter from './routes/adContracts';
+import clientsRouter from './routes/clients';
 
 const MEDIA_FILES_DIR = path.join(process.cwd(), 'media', 'uploads');
 // The frontend build is copied here by the Dockerfile; absent in local dev.
@@ -73,6 +75,8 @@ export function createApp(): express.Express {
   api.use('/media', mediaRouter);
   api.use('/logs', logsRouter);
   api.use('/rentals', rentalsRouter);                  // super_admin + token-link approve/reject
+  api.use('/ad-contracts', adContractsRouter);         // admin contracts (client ↔ screen agreements)
+  api.use('/clients', clientsRouter);                  // shop-api proxy (search, lookup)
   api.use('/public', publicCors, publicRentalsRouter); // no-auth public marketplace endpoints
   app.use('/api', api);
 

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import SunCalc from 'suncalc';
-import { devices as devicesApi, playlists as playlistsApi } from '../api/endpoints';
+import {
+  devices as devicesApi,
+  playlists as playlistsApi,
+  clients as clientsApi,
+  adContracts as adContractsApi,
+  type AdContract,
+  type ClientHit,
+} from '../api/endpoints';
 import type { Device, DeviceStatus, Playlist } from '../types';
 
 interface BrightnessFormState {
@@ -135,6 +142,16 @@ export default function DeviceDetail() {
   const [sForm, setSForm] = useState<SlotsFormState | null>(null);
   const [oForm, setOForm] = useState<OverlayFormState | null>(null);
   const [orgPlaylists, setOrgPlaylists] = useState<Playlist[]>([]);
+  // Owner client lookup + search ------------------------------------------
+  const [ownerInfo, setOwnerInfo] = useState<ClientHit | null>(null);
+  const [ownerQuery, setOwnerQuery] = useState('');
+  const [ownerResults, setOwnerResults] = useState<ClientHit[]>([]);
+  const [ownerSearching, setOwnerSearching] = useState(false);
+  // Ad contracts on this device -------------------------------------------
+  const [contracts, setContracts] = useState<AdContract[]>([]);
+  const [contractsByClient, setContractsByClient] = useState<Record<number, ClientHit>>({});
+  // "Add contract" modal --------------------------------------------------
+  const [showAddContract, setShowAddContract] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -153,7 +170,58 @@ export default function DeviceDetail() {
     // Playlists for the base-rotation picker. Best-effort: if it fails, the
     // dropdown just shows "(none)".
     playlistsApi.list().then(setOrgPlaylists).catch(() => undefined);
+    // Ad contracts on this device.
+    adContractsApi.list({ deviceId: id }).then(setContracts).catch(() => undefined);
   }, [id]);
+
+  // Look up the owner client's display info whenever device.owner_client_id changes.
+  useEffect(() => {
+    if (!device || device.owner_client_id == null) {
+      setOwnerInfo(null);
+      return;
+    }
+    // No GET-by-id endpoint surfaced yet — reuse search by id. The shop-api
+    // /search-clients accepts free text, but we need an id round-trip; for
+    // now skip until backend exposes /clients/:id. The contractsByClient
+    // map below provides the name via the contract list anyway, so this
+    // effect just clears stale state.
+    setOwnerInfo(null);
+  }, [device]);
+
+  // Bulk-lookup display names for the clients referenced by contracts.
+  // Done as a single search per unique client_id; results memoized.
+  useEffect(() => {
+    const ids = Array.from(new Set(contracts.map((c) => c.client_id)));
+    const missing = ids.filter((cid) => !contractsByClient[cid]);
+    if (missing.length === 0) return;
+    // We don't have a get-by-id; fall back to leaving the id displayed.
+    // A future backend endpoint can replace this with a real lookup.
+    setContractsByClient((prev) => {
+      const next = { ...prev };
+      for (const cid of missing) {
+        next[cid] = { id: cid, email: null, company: null, name: `Client #${cid}` };
+      }
+      return next;
+    });
+  }, [contracts, contractsByClient]);
+
+  // Debounced client search for the owner picker.
+  useEffect(() => {
+    const q = ownerQuery.trim();
+    if (q.length < 2) {
+      setOwnerResults([]);
+      return;
+    }
+    setOwnerSearching(true);
+    const t = setTimeout(() => {
+      clientsApi
+        .search(q)
+        .then((r) => setOwnerResults(r.clients))
+        .catch(() => setOwnerResults([]))
+        .finally(() => setOwnerSearching(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [ownerQuery]);
 
   const sunPreview = useMemo(() => {
     if (!bForm) return null;
@@ -512,6 +580,171 @@ export default function DeviceDetail() {
           </button>
         </div>
       </div>
+
+      {/* --- Screen ownership card -------------------------------------- */}
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Screen owner</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Set a screen-owner client if the screen belongs to a customer (e.g. they
+          bought it from us). An <em>owner_perpetual</em> ad contract is auto-created
+          so all their ads flow through the same contracts → ads pipeline. Leave
+          unset for Holm-owned rental screens.
+        </div>
+        {device.owner_client_id != null ? (
+          <div className="row between" style={{ alignItems: 'center' }}>
+            <div>
+              <strong>
+                {contractsByClient[device.owner_client_id]?.name
+                  ?? ownerInfo?.name
+                  ?? `Client #${device.owner_client_id}`}
+              </strong>
+              <div className="muted" style={{ fontSize: 12 }}>
+                shop-api client id: {device.owner_client_id}
+              </div>
+            </div>
+            <button
+              disabled={busy}
+              onClick={() =>
+                action(async () => {
+                  if (!confirm('Clear screen ownership? The owner_perpetual contract stays for history.')) return;
+                  const updated = await devicesApi.update(device.id, {
+                    ownerClientId: null,
+                    ownerProjectId: null,
+                  } as any);
+                  setDevice(updated);
+                })
+              }
+            >
+              Clear owner
+            </button>
+          </div>
+        ) : (
+          <div>
+            <input
+              placeholder="Search clients by company, email, or name…"
+              value={ownerQuery}
+              onChange={(e) => setOwnerQuery(e.target.value)}
+            />
+            {ownerSearching && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Searching…</div>}
+            {ownerResults.length > 0 && (
+              <ul style={{ listStyle: 'none', padding: 0, marginTop: 8, border: '1px solid #ddd', borderRadius: 4, maxHeight: 220, overflowY: 'auto' }}>
+                {ownerResults.map((c) => (
+                  <li key={c.id} style={{ padding: '8px 12px', borderBottom: '1px solid #eee' }}>
+                    <div className="row between" style={{ alignItems: 'center' }}>
+                      <div>
+                        <strong>{c.name}</strong>
+                        {c.company && c.company !== c.name && (
+                          <div className="muted" style={{ fontSize: 12 }}>{c.company}</div>
+                        )}
+                        {c.email && <div className="muted" style={{ fontSize: 12 }}>{c.email}</div>}
+                      </div>
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          action(async () => {
+                            const updated = await devicesApi.update(device.id, {
+                              ownerClientId: c.id,
+                            } as any);
+                            setDevice(updated);
+                            setOwnerQuery('');
+                            setOwnerResults([]);
+                            // Refresh contracts so the auto-created owner_perpetual shows up.
+                            const fresh = await adContractsApi.list({ deviceId: device.id });
+                            setContracts(fresh);
+                          })
+                        }
+                      >
+                        Set as owner
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {ownerQuery.trim().length >= 2 && !ownerSearching && ownerResults.length === 0 && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>No matches.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* --- Ad contracts on this device --------------------------------- */}
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Ad contracts</h3>
+          <button disabled={busy} onClick={() => setShowAddContract(true)}>
+            + Add contract
+          </button>
+        </div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          The commercial agreement between a client and this screen. One client
+          can have multiple ads (creatives) under a single contract.
+        </div>
+        {contracts.length === 0 ? (
+          <div className="muted" style={{ fontSize: 13 }}>No contracts yet.</div>
+        ) : (
+          <table style={{ width: '100%', fontSize: 14 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                <th>Client</th>
+                <th>Type</th>
+                <th>Term</th>
+                <th>Status</th>
+                <th>Auto-renew</th>
+                <th>Ads</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {contracts.map((c) => (
+                <tr key={c.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td>
+                    {contractsByClient[c.client_id]?.name ?? `Client #${c.client_id}`}
+                  </td>
+                  <td>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {c.contract_type === 'owner_perpetual' ? 'owner' : 'rental'}
+                    </span>
+                  </td>
+                  <td>
+                    {c.contract_type === 'owner_perpetual'
+                      ? <span className="muted">perpetual</span>
+                      : `${c.start_date} → ${c.end_date ?? '?'}`}
+                  </td>
+                  <td>
+                    <span style={{
+                      fontSize: 12,
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      background: c.status === 'active' ? '#dcfce7' : c.status === 'expired' ? '#fef3c7' : '#fee2e2',
+                    }}>
+                      {c.status}
+                    </span>
+                  </td>
+                  <td>{c.contract_type === 'owner_perpetual' ? '—' : (c.auto_renew ? '✓' : '—')}</td>
+                  <td>{c.rental_count ?? 0}</td>
+                  <td>
+                    <Link to={`/ad-contracts/${c.id}`} style={{ fontSize: 13 }}>Open →</Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* --- New-contract modal ----------------------------------------- */}
+      {showAddContract && (
+        <NewContractModal
+          deviceId={device.id}
+          onClose={() => setShowAddContract(false)}
+          onCreated={async () => {
+            setShowAddContract(false);
+            const fresh = await adContractsApi.list({ deviceId: device.id });
+            setContracts(fresh);
+          }}
+        />
+      )}
 
       <div className="card">
         <div className="row between" style={{ marginBottom: 8 }}>
@@ -873,6 +1106,197 @@ export default function DeviceDetail() {
           >
             Save marketing
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── NewContractModal ───────────────────────────────────────────────────────
+//
+// Lightweight inline-modal for creating an ad contract on a device. Lets
+// the admin pick a client (via the shop-api search proxy), set term and
+// price, and optionally attribute an already-existing rental on this
+// device to the new contract in one shot.
+
+function NewContractModal({
+  deviceId,
+  onClose,
+  onCreated,
+}: {
+  deviceId: string;
+  onClose: () => void;
+  onCreated: () => void | Promise<void>;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<ClientHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [picked, setPicked] = useState<ClientHit | null>(null);
+  const [startDate, setStartDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState<string>('');
+  const [termCount, setTermCount] = useState<string>('12');
+  const [termUnit, setTermUnit] = useState<'day' | 'week' | 'month' | 'year'>('month');
+  const [amountDollars, setAmountDollars] = useState<string>('');
+  const [autoRenew, setAutoRenew] = useState(false);
+  const [billingEmail, setBillingEmail] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (q.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      clientsApi
+        .search(q)
+        .then((r) => setResults(r.clients))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const submit = async () => {
+    if (!picked) {
+      setError('Pick a client first.');
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      const amountCents = amountDollars.trim() === '' ? undefined : Math.round(parseFloat(amountDollars) * 100);
+      await adContractsApi.create({
+        clientId:           picked.id,
+        deviceId,
+        contractType:       'rental',
+        startDate:          startDate || undefined,
+        endDate:            endDate || undefined,
+        termCount:          termCount.trim() === '' ? undefined : parseInt(termCount, 10),
+        termUnit,
+        amountCents,
+        autoRenew,
+        billingContactEmail: billingEmail.trim() || undefined,
+        notes:              notes.trim() || undefined,
+      });
+      await onCreated();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="card"
+        style={{ maxWidth: 560, width: '90%', maxHeight: '90vh', overflowY: 'auto', background: 'white' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="row between" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>New ad contract</h3>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        {error && <div className="error-banner" style={{ marginBottom: 8 }}>{error}</div>}
+
+        <label>Client</label>
+        {picked ? (
+          <div className="row between" style={{ alignItems: 'center', padding: '6px 0' }}>
+            <div>
+              <strong>{picked.name}</strong>
+              {picked.email && <div className="muted" style={{ fontSize: 12 }}>{picked.email}</div>}
+            </div>
+            <button onClick={() => { setPicked(null); setQ(''); }}>Change</button>
+          </div>
+        ) : (
+          <>
+            <input
+              placeholder="Search by company, email, or name…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            {searching && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Searching…</div>}
+            {results.length > 0 && (
+              <ul style={{ listStyle: 'none', padding: 0, marginTop: 8, border: '1px solid #ddd', borderRadius: 4, maxHeight: 200, overflowY: 'auto' }}>
+                {results.map((c) => (
+                  <li
+                    key={c.id}
+                    style={{ padding: '6px 10px', borderBottom: '1px solid #eee', cursor: 'pointer' }}
+                    onClick={() => setPicked(c)}
+                  >
+                    <strong>{c.name}</strong>
+                    {c.email && <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>{c.email}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+
+        <div className="row" style={{ gap: 12, marginTop: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label>Start date</label>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>End date</label>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 12, marginTop: 8 }}>
+          <div style={{ flex: 1 }}>
+            <label>Term count</label>
+            <input value={termCount} onChange={(e) => setTermCount(e.target.value)} inputMode="numeric" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Term unit</label>
+            <select value={termUnit} onChange={(e) => setTermUnit(e.target.value as 'day' | 'week' | 'month' | 'year')}>
+              <option value="day">day</option>
+              <option value="week">week</option>
+              <option value="month">month</option>
+              <option value="year">year</option>
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Amount ($)</label>
+            <input value={amountDollars} onChange={(e) => setAmountDollars(e.target.value)} inputMode="decimal" placeholder="1200" />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <label>Billing contact email (optional)</label>
+          <input value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} placeholder="accounts@client.com" />
+        </div>
+
+        <div style={{ marginTop: 8 }}>
+          <label>Notes</label>
+          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+
+        <label className="row" style={{ gap: 8, marginTop: 8, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={autoRenew}
+            onChange={(e) => setAutoRenew(e.target.checked)}
+            style={{ width: 'auto' }}
+          />
+          <span>Auto-renew (mints a QBO invoice 30 days before end date — DORMANT until master switch is flipped)</span>
+        </label>
+
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} disabled={saving}>Cancel</button>
+          <button onClick={submit} disabled={saving || !picked}>{saving ? 'Saving…' : 'Create contract'}</button>
         </div>
       </div>
     </div>

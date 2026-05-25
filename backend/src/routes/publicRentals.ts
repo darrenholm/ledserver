@@ -19,6 +19,7 @@ import {
   upsertClientViaShopApi,
 } from '../services/shopApiClient';
 import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
+import { mirrorRentalArtwork } from '../services/artworkMirror';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -482,6 +483,10 @@ router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), a
 
   const post = await applyPostSwapState(rental.rental_id, decision);
 
+  // Fire-and-forget mirror to L:\<client>\LED Ads\<contractRef>\. Never
+  // blocks the swap; failures land in the server log.
+  void mirrorRentalArtwork(rental.rental_id);
+
   res.json({
     ok: true,
     mediaId: media.rows[0].id,
@@ -669,6 +674,9 @@ router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) =>
   );
 
   const post = await applyPostSwapState(rental.rental_id, decision);
+
+  // Fire-and-forget mirror — see file-upload branch above.
+  void mirrorRentalArtwork(rental.rental_id);
 
   res.json({
     ok: true,

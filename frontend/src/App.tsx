@@ -20,6 +20,7 @@ import RentDisplay from './pages/RentDisplay';
 import RentOrder from './pages/RentOrder';
 import Rentals from './pages/Rentals';
 import RentalDetail from './pages/RentalDetail';
+import AdContractDetail from './pages/AdContractDetail';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -113,6 +114,14 @@ export default function App() {
             element={
               <RequireSuperAdmin>
                 <RentalDetail />
+              </RequireSuperAdmin>
+            }
+          />
+          <Route
+            path="ad-contracts/:id"
+            element={
+              <RequireSuperAdmin>
+                <AdContractDetail />
               </RequireSuperAdmin>
             }
           />

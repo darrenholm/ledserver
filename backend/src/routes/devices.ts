@@ -49,6 +49,9 @@ interface DeviceRow {
   overlay_weather_position: string;
   overlay_weather_location: string | null;
   overlay_weather_units: string;
+  // Ownership
+  owner_client_id: number | null;
+  owner_project_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +124,11 @@ const updateSchema = z.object({
   overlayWeatherPosition: z.enum(['top-left','top-right','bottom-left','bottom-right']).optional(),
   overlayWeatherLocation: z.string().max(120).nullable().optional(),
   overlayWeatherUnits: z.enum(['metric','imperial']).optional(),
+  // Ownership: who owns this screen (shop-api.clients.id) and which sale
+  // job delivered it. Setting owner_client_id triggers the DB trigger
+  // that auto-creates an owner_perpetual ad_contracts row.
+  ownerClientId: z.number().int().nullable().optional(),
+  ownerProjectId: z.number().int().nullable().optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -311,6 +319,8 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     overlay_weather_position: 'overlayWeatherPosition',
     overlay_weather_location: 'overlayWeatherLocation',
     overlay_weather_units: 'overlayWeatherUnits',
+    owner_client_id: 'ownerClientId',
+    owner_project_id: 'ownerProjectId',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {

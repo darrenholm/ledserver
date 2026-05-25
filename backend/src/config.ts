@@ -154,6 +154,16 @@ export const config = {
     secret: process.env.SHOP_STAFF_JWT_SECRET || process.env.CUSTOMER_JWT_SECRET || jwtSecret,
   },
 
+  // Ad-contract renewal cron. Wired up but DORMANT by default — flip
+  // RENEWAL_AUTO_INVOICE=true in env to enable. When enabled, the cron
+  // scans ad_contracts where auto_renew=true AND end_date is within
+  // RENEWAL_LEAD_DAYS, mints a QBO invoice via shop-api, and stamps
+  // renewal_invoice_id so the same term never gets billed twice.
+  renewal: {
+    autoInvoiceEnabled: (process.env.RENEWAL_AUTO_INVOICE ?? 'false').toLowerCase() === 'true',
+    leadDays: int('RENEWAL_LEAD_DAYS', 30),
+  },
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

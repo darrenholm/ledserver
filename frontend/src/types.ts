@@ -57,6 +57,9 @@ export interface Device {
   overlay_weather_position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   overlay_weather_location: string | null;
   overlay_weather_units: 'metric' | 'imperial';
+  // Ownership: shop-api.clients.id / projects.id (null = Holm-owned)
+  owner_client_id: number | null;
+  owner_project_id: number | null;
   created_at: string;
   updated_at: string;
 }

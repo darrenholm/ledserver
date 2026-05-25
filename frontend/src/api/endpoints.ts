@@ -168,6 +168,107 @@ export const rentals = {
     api<{ clientId: number; trust: boolean }>(`/rentals/${id}/client-trust`, { body: { trust } }),
 };
 
+export interface ClientHit {
+  id: number;
+  email: string | null;
+  company: string | null;
+  name: string;
+}
+
+export const clients = {
+  search: (q: string) => api<{ clients: ClientHit[] }>(`/clients/search?q=${encodeURIComponent(q)}`),
+};
+
+export interface AdContractRental {
+  id: string;
+  status: string;
+  start_date: string | null;
+  end_date: string | null;
+  start_time: string;
+  end_time: string;
+  amount_cents: number;
+  currency: string;
+  advertiser_name: string;
+  media_id: string | null;
+  created_at: string;
+  artwork_url: string | null;
+  artwork_mime: string | null;
+}
+
+export interface AdContract {
+  id: string;
+  client_id: number;
+  device_id: string;
+  contract_type: 'rental' | 'owner_perpetual';
+  status: 'active' | 'expired' | 'cancelled';
+  start_date: string;
+  end_date: string | null;
+  term_unit: 'day' | 'week' | 'month' | 'year' | null;
+  term_count: number | null;
+  amount_cents: number | null;
+  currency: string;
+  auto_renew: boolean;
+  renewal_invoice_id: string | null;
+  renewal_invoiced_at: string | null;
+  billing_contact_email: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  device_name?: string;
+  device_location?: string | null;
+  rental_count?: number;
+  rentals?: AdContractRental[];
+}
+
+export interface CreateAdContractBody {
+  clientId: number;
+  deviceId: string;
+  contractType?: 'rental' | 'owner_perpetual';
+  startDate?: string;
+  endDate?: string;
+  termUnit?: 'day' | 'week' | 'month' | 'year';
+  termCount?: number;
+  amountCents?: number;
+  currency?: string;
+  autoRenew?: boolean;
+  billingContactEmail?: string;
+  notes?: string;
+  attachRentalId?: string;
+}
+
+export interface UpdateAdContractBody {
+  startDate?: string;
+  endDate?: string | null;
+  termUnit?: 'day' | 'week' | 'month' | 'year' | null;
+  termCount?: number | null;
+  amountCents?: number | null;
+  currency?: string;
+  autoRenew?: boolean;
+  billingContactEmail?: string | null;
+  notes?: string | null;
+  status?: 'active' | 'expired' | 'cancelled';
+}
+
+export const adContracts = {
+  list: (params: { deviceId?: string; clientId?: number; status?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.deviceId) q.set('deviceId', params.deviceId);
+    if (params.clientId !== undefined) q.set('clientId', String(params.clientId));
+    if (params.status) q.set('status', params.status);
+    const qs = q.toString();
+    return api<AdContract[]>(`/ad-contracts${qs ? `?${qs}` : ''}`);
+  },
+  get: (id: string) => api<AdContract>(`/ad-contracts/${id}`),
+  create: (body: CreateAdContractBody) => api<AdContract>('/ad-contracts', { body }),
+  update: (id: string, body: UpdateAdContractBody) =>
+    api<AdContract>(`/ad-contracts/${id}`, { method: 'PATCH', body }),
+  cancel: (id: string) => api<void>(`/ad-contracts/${id}`, { method: 'DELETE' }),
+  attachRental: (contractId: string, rentalId: string) =>
+    api<{ ok: true }>(`/ad-contracts/${contractId}/attach-rental`, { body: { rentalId } }),
+  detachRental: (contractId: string, rentalId: string) =>
+    api<void>(`/ad-contracts/${contractId}/detach-rental`, { body: { rentalId } }),
+};
+
 export const logs = {
   list: (params: { deviceId?: string; level?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();

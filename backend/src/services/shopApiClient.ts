@@ -216,6 +216,120 @@ export async function lookupClientViaShopApi(clientId: number): Promise<ClientLo
   return body as ClientLookupResult;
 }
 
+// ─── Client search (for the LED admin's "Add ad contract" modal) ────────────
+
+export interface ClientSearchHit {
+  id: number;
+  email: string | null;
+  company: string | null;
+  name: string;
+}
+
+export async function searchClientsViaShopApi(q: string, limit = 20): Promise<ClientSearchHit[]> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/search-clients'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify({ q, limit }),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api search-clients failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return ((body as { clients?: ClientSearchHit[] }).clients) ?? [];
+}
+
+// ─── L:\ artwork mirror ──────────────────────────────────────────────────────
+
+interface MirrorArtworkArgs {
+  sourceUrl: string;
+  clientId: number;
+  contractRef: string;
+  filename: string;
+  mimeType?: string;
+}
+
+interface MirrorArtworkResult {
+  ok: true;
+  clientFolder: string;
+  contractFolder: string;
+  path: string;
+  size: number;
+}
+
+/**
+ * Best-effort: pushes a copy of an LED ad creative into the client's
+ * L:\<client>\LED Ads\<contractRef>\ folder via shop-api → files-bridge.
+ * Caller should catch ShopApiError and continue — the rental still works
+ * without the mirror (LED app serves VNNOX from its own volume).
+ */
+export async function mirrorAdArtworkViaShopApi(args: MirrorArtworkArgs): Promise<MirrorArtworkResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/mirror-ad-artwork'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api mirror-ad-artwork failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as MirrorArtworkResult;
+}
+
+// ─── QBO Invoice (renewals) ──────────────────────────────────────────────────
+
+interface CreateRentalInvoiceArgs {
+  clientId: number;
+  contractRef: string;
+  lineDescription: string;
+  amountCents: number;
+  dueDate?: string;        // YYYY-MM-DD
+  billingEmail?: string;
+}
+
+interface CreateRentalInvoiceResult {
+  id: string;              // QBO Invoice id
+  billEmail: string | null;
+}
+
+export async function createRentalInvoiceViaShopApi(
+  args: CreateRentalInvoiceArgs,
+): Promise<CreateRentalInvoiceResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/create-rental-invoice'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api create-rental-invoice failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as CreateRentalInvoiceResult;
+}
+
 export async function setClientTrustViaShopApi(clientId: number, trust: boolean): Promise<{ id: number; trust_self_serve_ads: boolean }> {
   if (!config.shopApi.bridgeSecret) {
     throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');

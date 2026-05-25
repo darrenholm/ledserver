@@ -24,6 +24,7 @@ export default function Layout() {
     ...(isSuperAdmin
       ? [
           { to: '/rentals', label: 'Ad rentals', end: false },
+          { to: '/ad-contracts', label: 'Ad contracts', end: false },
           { to: '/organizations', label: 'Organizations', end: false },
         ]
       : []),

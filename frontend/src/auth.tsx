@@ -9,6 +9,7 @@ interface AuthCtx {
   login: (username: string, password: string) => Promise<void>;
   signup: (organizationName: string, username: string, password: string) => Promise<void>;
   acceptInvite: (inviteToken: string, username: string, password: string) => Promise<void>;
+  ssoFromShop: (shopToken: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -59,13 +60,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
+  const ssoFromShop = async (shopToken: string) => {
+    const res = await authApi.ssoFromShop(shopToken);
+    setToken(res.token);
+    setOrgScope(null);
+    setUser(res.user);
+  };
+
   const logout = () => {
     setToken(null);
     setOrgScope(null);
     setUser(null);
   };
 
-  return <Ctx.Provider value={{ user, loading, login, signup, acceptInvite, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, loading, login, signup, acceptInvite, ssoFromShop, logout }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth(): AuthCtx {

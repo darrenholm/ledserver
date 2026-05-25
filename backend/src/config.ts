@@ -144,6 +144,16 @@ export const config = {
     secret: process.env.CUSTOMER_JWT_SECRET || jwtSecret,
   },
 
+  // SSO bridge for shop staff: a click on "LED Screens" in the shop sidebar
+  // forwards the user's shop-api staff JWT here; we verify it (with the
+  // same shop-api signing secret), find-or-create a matching LED user with
+  // super_admin role, and issue a LED JWT. The secret typically matches
+  // CUSTOMER_JWT_SECRET (both should equal shop-api's JWT_SECRET); the
+  // explicit env var lets you rotate them independently if needed.
+  shopStaffJwt: {
+    secret: process.env.SHOP_STAFF_JWT_SECRET || process.env.CUSTOMER_JWT_SECRET || jwtSecret,
+  },
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

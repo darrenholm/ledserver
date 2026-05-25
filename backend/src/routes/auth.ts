@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { config } from '../config';
 import { query, withTx } from '../db';
 import { Role, signToken } from '../middleware/auth';
 
@@ -54,6 +56,117 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
 }
+
+/**
+ * SSO handoff from holmgraphics.ca's staff jobs board.
+ *
+ * The shop sidebar's "LED Screens" link forwards the logged-in employee's
+ * shop-api staff JWT to us. We verify it with the shared secret (set via
+ * SHOP_STAFF_JWT_SECRET — must equal shop-api's JWT_SECRET in production),
+ * find-or-create a matching LED user with super_admin role, and issue a
+ * LED-realm JWT that the LED frontend then uses normally.
+ *
+ * Auto-provisioning rationale: the shop staff list is the source of truth
+ * for who works at Holm Graphics. Mirroring it manually in the LED users
+ * table would mean keeping two lists in sync forever. Auto-create on first
+ * SSO means a new hire who logs into the jobs board gets LED access for
+ * free, and an off-boarded employee loses LED access the moment their
+ * shop credentials are revoked (their JWT becomes unverifiable).
+ *
+ * Password for the auto-created user: a random 32-byte secret nobody knows.
+ * The user can only sign in via SSO; direct /login is locked out by virtue
+ * of the password being unguessable. If someone really needs a direct LED
+ * login they can be added manually with bcrypt.
+ */
+const ssoFromShopSchema = z.object({
+  shopToken: z.string().min(8).max(4000),
+});
+
+interface ShopStaffJwtPayload {
+  // From shop-api/routes/auth.js — { id, email, role, name }
+  id?: number;
+  email?: string;
+  role?: string;
+  name?: string;
+  // Customer tokens use realm='customer'; staff tokens don't carry one.
+  realm?: string;
+}
+
+router.post('/sso-from-shop', loginLimiter, async (req, res) => {
+  const { shopToken } = ssoFromShopSchema.parse(req.body);
+
+  // Verify the shop JWT. If the secret doesn't match or the token is
+  // expired/tampered, jwt.verify throws and we return 401.
+  let decoded: ShopStaffJwtPayload;
+  try {
+    decoded = jwt.verify(shopToken, config.shopStaffJwt.secret) as ShopStaffJwtPayload;
+  } catch {
+    res.status(401).json({ error: 'invalid or expired shop token' });
+    return;
+  }
+
+  // Reject customer-realm tokens — those don't grant staff access to the
+  // LED admin. Customer auth has its own /api/public/my-rentals path.
+  if (decoded.realm === 'customer') {
+    res.status(403).json({ error: 'customer tokens cannot sign in to LED admin' });
+    return;
+  }
+
+  // Reject the "client" role at shop-api too (that role exists for
+  // client-portal users of the jobs board, not Holm Graphics staff).
+  if (decoded.role === 'client') {
+    res.status(403).json({ error: 'jobs-board client role cannot sign in to LED admin' });
+    return;
+  }
+
+  if (!decoded.email) {
+    res.status(400).json({ error: 'shop token missing email claim' });
+    return;
+  }
+
+  // Username convention for SSO'd users: their shop email. Avoids collisions
+  // with any manually-created LED users that picked a different username.
+  const ssoUsername = decoded.email.trim().toLowerCase();
+
+  // Find-or-create. Existing users keep whatever role they already had so
+  // an admin can downgrade a specific person via SQL without us re-promoting
+  // them on every login.
+  let userRow = (await query<UserRow>(
+    `SELECT id, username, password_hash, role, organization_id
+       FROM users WHERE username = $1`,
+    [ssoUsername],
+  )).rows[0];
+
+  if (!userRow) {
+    // Random unguessable password so direct /login can't be used for this
+    // account — SSO is the only way in. 64-char hex = 256 bits of entropy.
+    const randomSecret = crypto.randomBytes(32).toString('hex');
+    const hash = await bcrypt.hash(randomSecret, 10);
+    const inserted = await query<UserRow>(
+      `INSERT INTO users (username, password_hash, role, organization_id)
+       VALUES ($1, $2, 'super_admin', NULL)
+       RETURNING id, username, password_hash, role, organization_id`,
+      [ssoUsername, hash],
+    );
+    userRow = inserted.rows[0];
+  }
+
+  const token = signToken({
+    sub: userRow.id,
+    username: userRow.username,
+    role: userRow.role,
+    orgId: userRow.organization_id,
+  });
+  res.json({
+    token,
+    user: {
+      id: userRow.id,
+      username: userRow.username,
+      role: userRow.role,
+      organizationId: userRow.organization_id,
+    },
+  });
+});
 
 router.post('/login', loginLimiter, async (req, res) => {
   const { username, password } = loginSchema.parse(req.body);

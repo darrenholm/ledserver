@@ -31,6 +31,14 @@ export const auth = {
     api<LoginResponse>(`/auth/invite/${encodeURIComponent(token)}/accept`, {
       body: { username, password },
     }),
+  /**
+   * Single sign-on from holmgraphics.ca's staff jobs board. Pass the
+   * shop-api staff JWT (hg_token in the shop's localStorage); backend
+   * verifies it, find-or-creates a matching LED super_admin user, and
+   * returns a LED-realm JWT we can store like a normal login.
+   */
+  ssoFromShop: (shopToken: string) =>
+    api<LoginResponse>('/auth/sso-from-shop', { body: { shopToken } }),
 };
 
 export const users = {

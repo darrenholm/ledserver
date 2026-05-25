@@ -146,3 +146,41 @@ export async function createProjectViaShopApi(args: CreateProjectArgs): Promise<
   }
   return body as CreateProjectResult;
 }
+
+// ─── QBO Sales Receipt ───────────────────────────────────────────────────────
+
+interface CreateSalesReceiptArgs {
+  clientId: number;
+  lineDescription: string;
+  amountCents: number;
+  currency?: string;
+  paymentRef?: string;
+  chargeDate?: string;    // ISO date or datetime
+}
+
+interface CreateSalesReceiptResult {
+  id: string;             // QBO returns string IDs
+}
+
+export async function createSalesReceiptViaShopApi(
+  args: CreateSalesReceiptArgs,
+): Promise<CreateSalesReceiptResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/create-sales-receipt'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api create-sales-receipt failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as CreateSalesReceiptResult;
+}

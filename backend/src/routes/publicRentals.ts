@@ -11,6 +11,7 @@ import { newRentalEmail, sendEmail } from '../services/email';
 import {
   chargeViaShopApi,
   createProjectViaShopApi,
+  createSalesReceiptViaShopApi,
   ShopApiError,
   upsertClientViaShopApi,
 } from '../services/shopApiClient';
@@ -427,9 +428,10 @@ router.post('/rentals/:id/pay', async (req, res) => {
       [charge.charge_id, data.cardBrand ?? charge.card_brand ?? null, data.cardLast4 ?? charge.card_last4 ?? null, rental.id],
     );
 
-    // Surface the booking on the staff jobs board. Best-effort: any failure
-    // here logs and continues — the payment itself already succeeded and the
-    // rental row holds the source of truth.
+    // Surface the booking on the staff jobs board AND record the QBO sales
+    // receipt. Best-effort: any failure here logs and continues — the
+    // payment itself already succeeded and the rental row holds the source
+    // of truth.
     void (async () => {
       try {
         const client = await upsertClientViaShopApi({
@@ -449,6 +451,27 @@ router.post('/rentals/:id/pay', async (req, res) => {
           `UPDATE rentals SET project_client_id = $1, project_id = $2, updated_at = NOW() WHERE id = $3`,
           [client.id, project.id, rental.id],
         );
+
+        // QBO sales receipt — records the sale + payment together. Independent
+        // try-block so a QBO outage doesn't blow away the job-board link we
+        // just made (and vice-versa).
+        try {
+          const receipt = await createSalesReceiptViaShopApi({
+            clientId: client.id,
+            lineDescription: `LED ad rental on ${rental.device_name}`,
+            amountCents: rental.amount_cents,
+            currency: rental.currency,
+            paymentRef: charge.charge_id,
+            chargeDate: new Date().toISOString(),
+          });
+          await query(
+            `UPDATE rentals SET qbo_receipt_id = $1, updated_at = NOW() WHERE id = $2`,
+            [receipt.id, rental.id],
+          );
+        } catch (qboErr) {
+          // eslint-disable-next-line no-console
+          console.error('qbo sales receipt failed for rental', rental.id, qboErr);
+        }
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error('job-board sync failed for rental', rental.id, e);
@@ -490,15 +513,22 @@ router.get('/rentals/:id', async (req, res) => {
     artwork_warnings: string[];
     paid_at: string | null;
     review_notes: string | null;
+    fit_mode: string;
     device_name: string;
+    device_width_px: number | null;
+    device_height_px: number | null;
     storage_url: string | null;
+    media_mime: string | null;
   }>(
     `SELECT r.id, r.status, r.advertiser_name, r.advertiser_email,
             r.start_date, r.end_date, r.start_time, r.end_time,
             r.amount_cents, r.currency,
-            r.artwork_warnings, r.paid_at, r.review_notes,
+            r.artwork_warnings, r.paid_at, r.review_notes, r.fit_mode,
             d.name AS device_name,
-            m.storage_url
+            d.width_px AS device_width_px,
+            d.height_px AS device_height_px,
+            m.storage_url,
+            m.mime_type AS media_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
        LEFT JOIN media m ON m.id = r.media_id
@@ -507,6 +537,28 @@ router.get('/rentals/:id', async (req, res) => {
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'not found' });
+    return;
+  }
+  res.json(rows[0]);
+});
+
+// Customer-facing toggle: "fit as-is" (contain) vs "stretch to fill" (cover).
+// No auth — the rental id is the secret. We only allow the change while the
+// rental is still before approval; after approval we've already published
+// to the device with whatever fit_mode was set.
+const fitModeSchema = z.object({ fitMode: z.enum(['contain', 'cover']) });
+
+router.patch('/rentals/:id/fit-mode', async (req, res) => {
+  const { fitMode } = fitModeSchema.parse(req.body);
+  const { rows } = await query<{ id: string; status: string; fit_mode: string }>(
+    `UPDATE rentals
+        SET fit_mode = $1, updated_at = NOW()
+      WHERE id = $2 AND status IN ('pending_payment', 'pending_review')
+      RETURNING id, status, fit_mode`,
+    [fitMode, req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(409).json({ error: 'rental not found or already approved' });
     return;
   }
   res.json(rows[0]);

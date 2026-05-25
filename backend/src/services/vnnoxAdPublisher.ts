@@ -35,6 +35,12 @@ export interface PublishAdArgs {
   /** Daily time-of-day window. */
   startTime: string;       // HH:MM:SS or HH:MM
   endTime: string;         // HH:MM:SS or HH:MM
+  /**
+   * 'contain' = preserve aspect, letterbox if it doesn't match the panel.
+   * 'cover'   = fill the panel, crop overflow.
+   * Maps to NovaStar's widget scaling mode in the publish payload.
+   */
+  fitMode?: 'contain' | 'cover';
 }
 
 export interface PublishAdResult {
@@ -95,6 +101,14 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
   const timeoutMs = config.vnnox.timeoutMs;
   const playerId = await resolvePlayerId(args.sn, timeoutMs);
 
+  // NovaStar's "scaling" / "stretchMode" field controls how the asset is
+  // rendered into the widget rectangle. The exact field name has varied
+  // across VNNOX versions; we send both common spellings and let the
+  // server pick the one it understands.
+  //   'cover'   → 'FILL'  (stretch/crop to fill panel)
+  //   'contain' → 'FIT'   (preserve aspect, letterbox)
+  const vnnoxScale = args.fitMode === 'cover' ? 'FILL' : 'FIT';
+
   const widget = {
     type: widgetTypeFor(args.mediaMimeType),
     name: args.name.slice(0, 64),
@@ -105,6 +119,9 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     duration: Math.max(1, args.slotSeconds) * 1000,
     zIndex: 0,
     layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
+    // Belt-and-suspenders: include both naming conventions VNNOX has used.
+    scaling: vnnoxScale,
+    stretchMode: vnnoxScale,
   };
 
   const schedule = {

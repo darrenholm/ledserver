@@ -151,11 +151,42 @@ export default function RentalDetail() {
         <h3 style={{ marginTop: 0 }}>Artwork</h3>
         {rental.artwork_url ? (
           <>
-            {rental.artwork_mime?.startsWith('video/') ? (
-              <video src={rental.artwork_url} controls style={{ maxWidth: '100%', borderRadius: 4 }} />
-            ) : (
-              <img src={rental.artwork_url} alt="artwork" style={{ maxWidth: '100%', borderRadius: 4, border: '1px solid var(--border)' }} />
-            )}
+            <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+              {rental.device_width_px && rental.device_height_px
+                ? `Previewed at the display's aspect ratio (${rental.device_width_px} × ${rental.device_height_px} px). `
+                : 'Display dimensions not on file — previewing at 16:9. '}
+              Customer chose: <strong>{rental.fit_mode === 'cover' ? 'Stretch to fill' : 'Fit as-is (letterbox)'}</strong>
+            </div>
+            <div
+              style={{
+                width: '100%',
+                background: '#000',
+                border: '3px solid #222',
+                borderRadius: 8,
+                overflow: 'hidden',
+                aspectRatio:
+                  rental.device_width_px && rental.device_height_px
+                    ? `${rental.device_width_px} / ${rental.device_height_px}`
+                    : '16 / 9',
+              }}
+            >
+              {rental.artwork_mime?.startsWith('video/') ? (
+                <video
+                  src={rental.artwork_url}
+                  style={{ display: 'block', width: '100%', height: '100%', objectFit: rental.fit_mode === 'cover' ? 'cover' : 'contain' }}
+                  muted
+                  loop
+                  autoPlay
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={rental.artwork_url}
+                  alt="artwork"
+                  style={{ display: 'block', width: '100%', height: '100%', objectFit: rental.fit_mode === 'cover' ? 'cover' : 'contain' }}
+                />
+              )}
+            </div>
             {rental.artwork_warnings && rental.artwork_warnings.length > 0 && (
               <div style={{ marginTop: 12, padding: 12, background: 'rgba(230, 181, 74, 0.1)', borderRadius: 6, fontSize: 13 }}>
                 <strong style={{ color: 'var(--yellow)' }}>Warnings:</strong>

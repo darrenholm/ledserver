@@ -38,10 +38,17 @@ interface RentalRow {
   reviewed_by: string | null;
   reviewed_at: string | null;
   review_notes: string | null;
+  fit_mode: string;
+  qbo_receipt_id: string | null;
+  vnnox_program_id: string | null;
+  published_at: string | null;
+  publish_error: string | null;
   created_at: string;
   updated_at: string;
   device_name: string;
   device_location: string | null;
+  device_width_px: number | null;
+  device_height_px: number | null;
   artwork_url: string | null;
   artwork_mime: string | null;
 }
@@ -64,6 +71,7 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const { rows } = await query<RentalRow>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
             m.storage_url AS artwork_url, m.mime_type AS artwork_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
@@ -79,6 +87,7 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
 router.get('/:id', authRequired, requireRole('super_admin'), async (req, res) => {
   const { rows } = await query<RentalRow>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
             m.storage_url AS artwork_url, m.mime_type AS artwork_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
@@ -201,6 +210,7 @@ async function approveRental(
   // Hydrate device + artwork for the email.
   const hydrated = await query<RentalRow>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
             m.storage_url AS artwork_url, m.mime_type AS artwork_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
@@ -249,6 +259,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
     end_date: string;
     start_time: string;
     end_time: string;
+    fit_mode: string;
     device_provider: string;
     device_sn: string;
     device_name: string;
@@ -260,7 +271,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
     existing_program_id: string | null;
   }>(
     `SELECT r.id AS rental_id, r.advertiser_name,
-            r.start_date, r.end_date, r.start_time, r.end_time,
+            r.start_date, r.end_date, r.start_time, r.end_time, r.fit_mode,
             r.vnnox_program_id AS existing_program_id,
             d.provider AS device_provider,
             d.device_key AS device_sn,
@@ -321,6 +332,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
       endDate: x.end_date,
       startTime: x.start_time,
       endTime: x.end_time,
+      fitMode: x.fit_mode === 'cover' ? 'cover' : 'contain',
     });
     await query(
       `UPDATE rentals
@@ -357,6 +369,7 @@ async function rejectRental(rentalId: string, reviewerId: string | null, notes: 
   if (rows.length === 0) return null;
   const hydrated = await query<RentalRow>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
             m.storage_url AS artwork_url, m.mime_type AS artwork_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
@@ -419,6 +432,7 @@ router.post('/:id/republish', authRequired, requireRole('super_admin'), async (r
   }
   const { rows } = await query<RentalRow>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
             m.storage_url AS artwork_url, m.mime_type AS artwork_mime
        FROM rentals r
        JOIN devices d ON d.id = r.device_id

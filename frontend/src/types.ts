@@ -212,8 +212,12 @@ export interface PublicRentalStatus {
   artwork_warnings: string[];
   paid_at: string | null;
   review_notes: string | null;
+  fit_mode: 'contain' | 'cover';
   device_name: string;
+  device_width_px: number | null;
+  device_height_px: number | null;
   storage_url: string | null;
+  media_mime: string | null;
 }
 
 export interface AdminRental extends PublicRentalStatus {
@@ -230,6 +234,7 @@ export interface AdminRental extends PublicRentalStatus {
   device_location: string | null;
   artwork_url: string | null;
   artwork_mime: string | null;
+  qbo_receipt_id: string | null;
   vnnox_program_id: string | null;
   published_at: string | null;
   publish_error: string | null;

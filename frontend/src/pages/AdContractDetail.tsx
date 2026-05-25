@@ -507,7 +507,14 @@ export default function AdContractDetail() {
               Ads on this screen that aren't yet attributed to any contract. Click "Attach" to link an ad to this contract.
             </div>
             {available.length === 0 ? (
-              <div className="muted">No unattached ads on this screen.</div>
+              <div>
+                <div className="muted" style={{ marginBottom: 8 }}>No unattached rentals on this screen.</div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  This picker only shows ads that came through the <code>/advertise</code> booking
+                  flow. For files you uploaded yourself via Media or Playlists, close this and use{' '}
+                  <strong>+ Add from media library</strong> instead.
+                </div>
+              </div>
             ) : (
               <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                 {available.map((r) => (

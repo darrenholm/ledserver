@@ -119,7 +119,7 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('fil
     res.status(400).json({ error: 'no file uploaded' });
     return;
   }
-  const orgId = orgForInsert(req);
+  const orgId = await orgForInsert(req);
   const { sha256, md5 } = await hashFile(req.file.path);
   const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${req.file.filename}`;
 

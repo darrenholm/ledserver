@@ -146,7 +146,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
   const data = createSchema.parse(req.body);
-  const orgId = orgForInsert(req);
+  const orgId = await orgForInsert(req);
   const created = await withTx(async (client) => {
     // Validate all referenced media belong to the same org.
     if (data.items.length > 0) {

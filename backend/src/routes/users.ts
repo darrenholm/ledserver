@@ -63,7 +63,7 @@ router.get('/', requireOrgRole('org_admin'), async (req, res) => {
 
 router.post('/', requireOrgRole('org_admin'), async (req, res) => {
   const data = createSchema.parse(req.body);
-  const orgId = orgForInsert(req);
+  const orgId = await orgForInsert(req);
 
   const taken = await query(`SELECT 1 FROM users WHERE username = $1`, [data.username]);
   if (taken.rows.length > 0) {
@@ -217,7 +217,7 @@ router.get('/invites', requireOrgRole('org_admin'), async (req, res) => {
 
 router.post('/invites', requireOrgRole('org_admin'), async (req, res) => {
   const data = inviteSchema.parse(req.body);
-  const orgId = orgForInsert(req);
+  const orgId = await orgForInsert(req);
 
   // Look up the org name for the email template.
   const orgRes = await query<{ name: string }>(`SELECT name FROM organizations WHERE id = $1`, [orgId]);

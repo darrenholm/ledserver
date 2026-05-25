@@ -152,7 +152,7 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), async (req, res) =
     res.status(403).json({ error: 'lan_direct provider is super-admin only' });
     return;
   }
-  const orgId = orgForInsert(req);
+  const orgId = await orgForInsert(req);
   const defaultPort = data.provider === 'lan_direct' ? 5200 : 5000;
   const { rows } = await query<DeviceRow>(
     `INSERT INTO devices (organization_id, provider, name, model, device_key, ip_address, port, location, width_px, height_px, metadata)

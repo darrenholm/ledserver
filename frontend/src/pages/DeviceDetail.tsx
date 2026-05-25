@@ -175,35 +175,47 @@ export default function DeviceDetail() {
     adContractsApi.list({ deviceId: id }).then(setContracts).catch(() => undefined);
   }, [id]);
 
-  // Look up the owner client's display info whenever device.owner_client_id changes.
+  // Look up the owner client's display name whenever device.owner_client_id changes.
   useEffect(() => {
     if (!device || device.owner_client_id == null) {
       setOwnerInfo(null);
       return;
     }
-    // No GET-by-id endpoint surfaced yet — reuse search by id. The shop-api
-    // /search-clients accepts free text, but we need an id round-trip; for
-    // now skip until backend exposes /clients/:id. The contractsByClient
-    // map below provides the name via the contract list anyway, so this
-    // effect just clears stale state.
-    setOwnerInfo(null);
+    let cancelled = false;
+    clientsApi.get(device.owner_client_id)
+      .then((c) => {
+        if (!cancelled) setOwnerInfo({ id: c.id, name: c.name, email: c.email, company: c.company });
+      })
+      .catch(() => {
+        if (!cancelled) setOwnerInfo(null);
+      });
+    return () => { cancelled = true; };
   }, [device]);
 
   // Bulk-lookup display names for the clients referenced by contracts.
-  // Done as a single search per unique client_id; results memoized.
+  // Single-flight per id, cached across re-fetches of the contracts list.
   useEffect(() => {
     const ids = Array.from(new Set(contracts.map((c) => c.client_id)));
     const missing = ids.filter((cid) => !contractsByClient[cid]);
     if (missing.length === 0) return;
-    // We don't have a get-by-id; fall back to leaving the id displayed.
-    // A future backend endpoint can replace this with a real lookup.
-    setContractsByClient((prev) => {
-      const next = { ...prev };
-      for (const cid of missing) {
-        next[cid] = { id: cid, email: null, company: null, name: `Client #${cid}` };
-      }
-      return next;
+    let cancelled = false;
+    Promise.allSettled(missing.map((cid) => clientsApi.get(cid))).then((results) => {
+      if (cancelled) return;
+      setContractsByClient((prev) => {
+        const next = { ...prev };
+        for (let i = 0; i < results.length; i++) {
+          const cid = missing[i];
+          const r = results[i];
+          if (r.status === 'fulfilled') {
+            next[cid] = { id: r.value.id, name: r.value.name, email: r.value.email, company: r.value.company };
+          } else {
+            next[cid] = { id: cid, email: null, company: null, name: `Client #${cid}` };
+          }
+        }
+        return next;
+      });
     });
+    return () => { cancelled = true; };
   }, [contracts, contractsByClient]);
 
   // Debounced client search for the owner picker.

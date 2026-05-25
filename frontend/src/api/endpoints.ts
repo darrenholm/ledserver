@@ -175,8 +175,17 @@ export interface ClientHit {
   name: string;
 }
 
+export interface ClientFull {
+  id: number;
+  email: string;
+  company: string | null;
+  name: string;
+  trust_self_serve_ads: boolean;
+}
+
 export const clients = {
   search: (q: string) => api<{ clients: ClientHit[] }>(`/clients/search?q=${encodeURIComponent(q)}`),
+  get: (id: number) => api<ClientFull>(`/clients/${id}`),
 };
 
 export interface AdContractRental {

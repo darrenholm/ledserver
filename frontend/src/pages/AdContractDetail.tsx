@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { adContracts as adContractsApi, media as mediaApi, type AdContract, type UnattachedRental } from '../api/endpoints';
+import { adContracts as adContractsApi, media as mediaApi, clients as clientsApi, type AdContract, type ClientFull, type UnattachedRental } from '../api/endpoints';
 import type { Media } from '../types';
 
 /**
@@ -17,6 +17,7 @@ export default function AdContractDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [contract, setContract] = useState<AdContract | null>(null);
+  const [client, setClient] = useState<ClientFull | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -47,6 +48,9 @@ export default function AdContractDetail() {
         setAutoRenew(c.auto_renew);
         setBillingEmail(c.billing_contact_email ?? '');
         setNotes(c.notes ?? '');
+        // Hydrate the real client display name. Best-effort: a 404 or
+        // shop-api hiccup leaves us with the "Client #N" placeholder.
+        clientsApi.get(c.client_id).then(setClient).catch(() => setClient(null));
       })
       .catch((e) => setErr((e as Error).message));
   }, [id]);
@@ -178,7 +182,11 @@ export default function AdContractDetail() {
             Ad contract <span className="muted" style={{ fontSize: 14 }}>#{contract.id.slice(0, 8)}</span>
           </h2>
           <div className="muted" style={{ fontSize: 14 }}>
-            Client #{contract.client_id} · {' '}
+            <strong style={{ color: 'var(--text)' }}>
+              {client?.name ?? `Client #${contract.client_id}`}
+            </strong>
+            {client?.company && client.company !== client.name && ` (${client.company})`}
+            {' · '}
             <Link to={`/devices/${contract.device_id}`}>
               {contract.device_name ?? contract.device_id.slice(0, 8)}
             </Link>

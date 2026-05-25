@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { adContracts as adContractsApi, type AdContract } from '../api/endpoints';
+import { adContracts as adContractsApi, clients as clientsApi, type AdContract } from '../api/endpoints';
 
 /**
  * Top-level list of every ad contract across all devices in the current
@@ -18,6 +18,9 @@ export default function AdContracts() {
   const [err, setErr] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'expired' | 'cancelled'>('active');
   const [typeFilter, setTypeFilter] = useState<'all' | 'rental' | 'owner_perpetual'>('all');
+  // Cache of client id → display name, populated as contracts arrive.
+  // Persists across status filter changes so we don't re-fetch the same ids.
+  const [clientNames, setClientNames] = useState<Record<number, string>>({});
 
   useEffect(() => {
     adContractsApi
@@ -25,6 +28,33 @@ export default function AdContracts() {
       .then(setContracts)
       .catch((e) => setErr((e as Error).message));
   }, [statusFilter]);
+
+  // Hydrate display names for every client id we haven't seen yet.
+  // Single-flight in parallel; cache survives status-filter toggling.
+  useEffect(() => {
+    const missing = Array.from(new Set(contracts.map((c) => c.client_id)))
+      .filter((id) => clientNames[id] === undefined);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    Promise.allSettled(missing.map((id) => clientsApi.get(id))).then((results) => {
+      if (cancelled) return;
+      setClientNames((prev) => {
+        const next = { ...prev };
+        for (let i = 0; i < results.length; i++) {
+          const id = missing[i];
+          const r = results[i];
+          if (r.status === 'fulfilled') {
+            next[id] = r.value.name;
+          } else {
+            // Cache the failure so we don't hammer shop-api for an unknown id.
+            next[id] = `Client #${id}`;
+          }
+        }
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [contracts, clientNames]);
 
   const filtered = useMemo(() => {
     if (typeFilter === 'all') return contracts;
@@ -91,7 +121,7 @@ export default function AdContracts() {
               {filtered.map((c) => (
                 <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '6px 8px' }}>
-                    Client #{c.client_id}
+                    {clientNames[c.client_id] ?? `Client #${c.client_id}`}
                   </td>
                   <td style={{ padding: '6px 8px' }}>
                     <Link to={`/devices/${c.device_id}`}>

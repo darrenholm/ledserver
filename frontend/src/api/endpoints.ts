@@ -289,6 +289,8 @@ export const adContracts = {
     api<void>(`/ad-contracts/${contractId}/detach-rental`, { body: { rentalId } }),
   unattachedRentals: (deviceId: string) =>
     api<UnattachedRental[]>(`/ad-contracts/unattached-rentals/${deviceId}`),
+  attachMedia: (contractId: string, mediaId: string, advertiserName?: string) =>
+    api<{ rentalId: string }>(`/ad-contracts/${contractId}/attach-media`, { body: { mediaId, advertiserName } }),
 };
 
 export const logs = {

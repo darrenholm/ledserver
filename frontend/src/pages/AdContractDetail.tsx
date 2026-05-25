@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { adContracts as adContractsApi, type AdContract, type UnattachedRental } from '../api/endpoints';
+import { adContracts as adContractsApi, media as mediaApi, type AdContract, type UnattachedRental } from '../api/endpoints';
+import type { Media } from '../types';
 
 /**
  * Admin detail page for a single ad contract. Shows:
@@ -29,6 +30,11 @@ export default function AdContractDetail() {
   const [showAttach, setShowAttach] = useState(false);
   const [available, setAvailable] = useState<UnattachedRental[]>([]);
   const [attachBusy, setAttachBusy] = useState<string | null>(null); // rental id being attached
+  // Attach-from-media-library picker state.
+  const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const [mediaLib, setMediaLib] = useState<Media[]>([]);
+  const [mediaSearch, setMediaSearch] = useState('');
+  const [mediaBusy, setMediaBusy] = useState<string | null>(null); // media id being attached
 
   useEffect(() => {
     if (!id) return;
@@ -102,6 +108,32 @@ export default function AdContractDetail() {
       setErr((e as Error).message);
     } finally {
       setAttachBusy(null);
+    }
+  };
+
+  const openMediaPicker = async () => {
+    setShowMediaPicker(true);
+    setMediaSearch('');
+    try {
+      const list = await mediaApi.list();
+      setMediaLib(list);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const attachMedia = async (mediaId: string) => {
+    if (!contract) return;
+    setMediaBusy(mediaId);
+    setErr(null);
+    try {
+      await adContractsApi.attachMedia(contract.id, mediaId);
+      await refreshContract();
+      // Don't close the picker — admin may want to add several files in a row.
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setMediaBusy(null);
     }
   };
 
@@ -297,7 +329,14 @@ export default function AdContractDetail() {
       <div className="card">
         <div className="row between" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>Ads under this contract</h3>
-          <button onClick={openAttach} disabled={busy}>+ Attach existing ad</button>
+          <div className="row" style={{ gap: 8 }}>
+            <button onClick={openMediaPicker} disabled={busy} title="Pick a file from the media library and link it to this contract (use this for ads not booked via /advertise)">
+              + Add from media library
+            </button>
+            <button onClick={openAttach} disabled={busy} title="Attach a rental that was booked via /advertise but not yet attributed">
+              + Attach existing ad
+            </button>
+          </div>
         </div>
         {!contract.rentals || contract.rentals.length === 0 ? (
           <div className="muted" style={{ fontSize: 13 }}>No ads attached yet.</div>
@@ -353,6 +392,98 @@ export default function AdContractDetail() {
           </table>
         )}
       </div>
+
+      {/* --- Attach from media library picker --- */}
+      {showMediaPicker && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+          onClick={() => setShowMediaPicker(false)}
+        >
+          <div
+            className="card"
+            style={{ maxWidth: 720, width: '90%', maxHeight: '90vh', overflowY: 'auto', background: 'white' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row between" style={{ marginBottom: 12 }}>
+              <h3 style={{ margin: 0 }}>Add ad from media library</h3>
+              <button onClick={() => setShowMediaPicker(false)}>✕</button>
+            </div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              Pick a file you've already uploaded to the media library — typical for
+              ads the screen owner provided directly. Each pick creates a rental row
+              linked to this contract and (best-effort) mirrors the file into the
+              client's <code>LED Ads</code> folder.
+            </div>
+            <input
+              type="text"
+              placeholder="Filter by filename…"
+              value={mediaSearch}
+              onChange={(e) => setMediaSearch(e.target.value)}
+              style={{ marginBottom: 12 }}
+            />
+            {mediaLib.length === 0 ? (
+              <div className="muted">No media in the library yet. Upload via the Media page first.</div>
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                gap: 12,
+              }}>
+                {mediaLib
+                  .filter((m) => {
+                    if (!mediaSearch.trim()) return true;
+                    const needle = mediaSearch.toLowerCase();
+                    return (
+                      m.original_name.toLowerCase().includes(needle) ||
+                      m.filename.toLowerCase().includes(needle)
+                    );
+                  })
+                  .map((m) => {
+                    const isImage = m.mime_type.startsWith('image/');
+                    const preview = m.thumbnail_url || (isImage ? m.storage_url : null);
+                    return (
+                      <div key={m.id} style={{ border: '1px solid #ddd', borderRadius: 4, padding: 8 }}>
+                        <div style={{
+                          width: '100%',
+                          height: 100,
+                          background: '#f3f4f6',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          overflow: 'hidden',
+                          marginBottom: 6,
+                        }}>
+                          {preview ? (
+                            <img
+                              src={preview}
+                              alt=""
+                              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                            />
+                          ) : (
+                            <span className="muted" style={{ fontSize: 11 }}>{m.mime_type}</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, marginBottom: 6, wordBreak: 'break-word' }}>
+                          {m.original_name}
+                        </div>
+                        <button
+                          onClick={() => attachMedia(m.id)}
+                          disabled={mediaBusy !== null}
+                          style={{ width: '100%', fontSize: 12 }}
+                        >
+                          {mediaBusy === m.id ? 'Attaching…' : 'Attach'}
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* --- Attach existing ad picker --- */}
       {showAttach && (

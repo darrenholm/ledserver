@@ -399,4 +399,108 @@ router.post('/:id/detach-rental', requireRole('super_admin', 'org_admin'), async
   res.status(204).end();
 });
 
+// --- Attach a media file (creates a rental row + links it) ---
+//
+// For ads that DIDN'T come through the /advertise booking pipeline —
+// e.g. the screen owner just handed us their file and we dropped it in
+// the base playlist. There's no rental row yet, but we want to attribute
+// the creative to a contract for bookkeeping + L:\ mirroring.
+//
+// This endpoint creates a minimal rental row (status='active', amount=0,
+// duration matching the contract's term) and links it to the contract.
+// The L:\ mirror fires best-effort so the file lands in the client's
+// LED Ads folder alongside their other work.
+
+const attachMediaSchema = z.object({
+  mediaId: z.string().uuid(),
+  /** Optional override for the advertiser display name. Defaults to the contract's client name. */
+  advertiserName: z.string().max(120).optional(),
+});
+
+router.post('/:id/attach-media', requireRole('super_admin', 'org_admin'), async (req, res) => {
+  const data = attachMediaSchema.parse(req.body);
+
+  // Load contract + scope-check.
+  const { clause, params } = orgClause(req, 'd.organization_id', 2);
+  const ctr = await query<{
+    id: string;
+    device_id: string;
+    client_id: number;
+    start_date: string;
+    end_date: string | null;
+    contract_type: string;
+    org_id: string;
+  }>(
+    `SELECT c.id, c.device_id, c.client_id, c.start_date, c.end_date, c.contract_type,
+            d.organization_id AS org_id
+       FROM ad_contracts c
+       JOIN devices d ON d.id = c.device_id
+      WHERE c.id = $1 ${clause}`,
+    [req.params.id, ...params],
+  );
+  if (ctr.rows.length === 0) {
+    res.status(404).json({ error: 'contract not found' });
+    return;
+  }
+  const contract = ctr.rows[0];
+
+  // Confirm media is in the same org (don't let one org's contract reference another's file).
+  const media = await query<{ id: string; original_name: string; mime_type: string }>(
+    `SELECT id, original_name, mime_type FROM media WHERE id = $1 AND organization_id = $2`,
+    [data.mediaId, contract.org_id],
+  );
+  if (media.rows.length === 0) {
+    res.status(404).json({ error: 'media not found in this scope' });
+    return;
+  }
+
+  // Default the rental's run window to the contract's term. Perpetual
+  // contracts get a sentinel-far end_date so the expiry cron leaves it
+  // alone (NULL end_date wouldn't be queryable, but a far-future date
+  // also keeps queries simple).
+  const startDate = contract.start_date;
+  const endDate   = contract.end_date ?? '2099-12-31';
+  const durationDays = Math.max(1, Math.ceil(
+    (new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24),
+  ));
+
+  const advertiserName  = (data.advertiserName && data.advertiserName.trim())
+    || `Client #${contract.client_id}`;
+
+  // Insert the rental row. Billing is at the contract level so amount_cents=0
+  // here. We also default the daypart to 24h so the ad isn't filtered out by
+  // time-of-day checks.
+  const { rows } = await query<{ id: string }>(
+    `INSERT INTO rentals (
+       device_id, contract_id, status,
+       advertiser_name, advertiser_email,
+       start_date, end_date, start_time, end_time,
+       duration_unit, duration_count, duration_days,
+       amount_cents, currency,
+       media_id
+     )
+     VALUES (
+       $1, $2, 'active',
+       $3, $4,
+       $5::date, $6::date, '00:00:00', '23:59:59',
+       'day', $7, $7,
+       0, 'CAD',
+       $8
+     )
+     RETURNING id`,
+    [
+      contract.device_id, contract.id,
+      advertiserName, 'attributed@holmgraphics.ca',
+      startDate, endDate, durationDays,
+      data.mediaId,
+    ],
+  );
+  const rentalId = rows[0].id;
+
+  // Best-effort L:\ mirror so the file lands in the client's LED Ads folder.
+  void mirrorRentalArtwork(rentalId);
+
+  res.status(201).json({ rentalId });
+});
+
 export default router;

@@ -83,7 +83,7 @@ export default function PlaylistDetail() {
       // toggle off
       setItems(items.filter((it) => it.mediaId !== mediaId));
     } else {
-      setItems([...items, { mediaId, durationMs: 10000 }]);
+      setItems([...items, { mediaId, durationMs: 6000 }]);
     }
   };
 
@@ -210,7 +210,7 @@ export default function PlaylistDetail() {
                 <th style={{ width: 40 }}>#</th>
                 <th style={{ width: 72 }}>Preview</th>
                 <th>Media</th>
-                <th style={{ width: 180 }}>Duration (ms)</th>
+                <th style={{ width: 140 }}>Duration (sec)</th>
                 <th style={{ width: 140 }}></th>
               </tr>
             </thead>
@@ -238,13 +238,23 @@ export default function PlaylistDetail() {
                       )}
                     </td>
                     <td>
+                      {/*
+                       * Wire format is milliseconds (what VNNOX consumes); the UI
+                       * works in seconds because that's how staff think about ad
+                       * playback. 0.5s minimum keeps fast-flash edge cases from
+                       * being typoed in, 3600s (1 hour) is the same cap as before.
+                       */}
                       <input
                         type="number"
-                        min={500}
-                        max={3_600_000}
-                        step={500}
-                        value={it.durationMs}
-                        onChange={(e) => setDuration(i, parseInt(e.target.value, 10) || 0)}
+                        min={0.5}
+                        max={3600}
+                        step={0.5}
+                        value={it.durationMs / 1000}
+                        onChange={(e) => {
+                          const sec = parseFloat(e.target.value);
+                          const ms = Number.isFinite(sec) ? Math.round(sec * 1000) : 0;
+                          setDuration(i, ms);
+                        }}
                       />
                     </td>
                     <td>

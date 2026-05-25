@@ -36,7 +36,9 @@ export default function Playlists() {
     try {
       await playlistsApi.create({
         name,
-        items: picked.map((mediaId) => ({ mediaId, durationMs: 10000 })),
+        // 6s default matches the ad-slot length convention so new playlists
+        // feel consistent with how rental ads play in the rotation.
+        items: picked.map((mediaId) => ({ mediaId, durationMs: 6000 })),
       });
       setName('');
       setPicked([]);

@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config';
 import { query, withTx } from '../db';
-import { Role, signToken } from '../middleware/auth';
+import { authRequired, Role, signToken } from '../middleware/auth';
 
 function hashInviteToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -184,6 +184,29 @@ router.post('/sso-from-shop', loginLimiter, async (req, res) => {
       role: userRow.role,
       organizationId: userRow.organization_id,
     },
+  });
+});
+
+/**
+ * Tiny "who am I" diagnostic. Returns the JWT identity + a fresh DB read
+ * of the user's role. Useful when an admin reports a permissions error
+ * and we want to confirm "is your JWT stale, or is your DB record wrong"
+ * without poking at localStorage in the browser.
+ */
+router.get('/me', authRequired, async (req, res) => {
+  const { rows } = await query<{ id: string; username: string; role: Role; organization_id: string | null }>(
+    `SELECT id, username, role, organization_id FROM users WHERE id = $1`,
+    [req.user!.sub],
+  );
+  res.json({
+    jwt: {
+      sub: req.user!.sub,
+      username: req.user!.username,
+      role: req.user!.role,
+      orgId: req.user!.orgId,
+    },
+    db: rows[0] ?? null,
+    stale: rows[0] ? (rows[0].role !== req.user!.role || rows[0].organization_id !== req.user!.orgId) : false,
   });
 });
 

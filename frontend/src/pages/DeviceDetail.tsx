@@ -35,6 +35,29 @@ function deviceToSlotsForm(d: Device): SlotsFormState {
   };
 }
 
+type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+interface OverlayFormState {
+  clockEnabled: boolean;
+  clockPosition: Corner;
+  clockFormat: '12h' | '24h';
+  weatherEnabled: boolean;
+  weatherPosition: Corner;
+  weatherLocation: string;
+  weatherUnits: 'metric' | 'imperial';
+}
+
+function deviceToOverlayForm(d: Device): OverlayFormState {
+  return {
+    clockEnabled: d.overlay_clock_enabled ?? false,
+    clockPosition: (d.overlay_clock_position as Corner) ?? 'top-right',
+    clockFormat: d.overlay_clock_format ?? '12h',
+    weatherEnabled: d.overlay_weather_enabled ?? false,
+    weatherPosition: (d.overlay_weather_position as Corner) ?? 'top-left',
+    weatherLocation: d.overlay_weather_location ?? '',
+    weatherUnits: d.overlay_weather_units ?? 'metric',
+  };
+}
+
 interface DetailsFormState {
   model: string;
   firmware: string;
@@ -110,6 +133,7 @@ export default function DeviceDetail() {
   const [editingDetails, setEditingDetails] = useState(false);
   const [mForm, setMForm] = useState<MarketingFormState | null>(null);
   const [sForm, setSForm] = useState<SlotsFormState | null>(null);
+  const [oForm, setOForm] = useState<OverlayFormState | null>(null);
   const [orgPlaylists, setOrgPlaylists] = useState<Playlist[]>([]);
 
   useEffect(() => {
@@ -123,6 +147,7 @@ export default function DeviceDetail() {
         setDForm(deviceToDetailsForm(d));
         setMForm(deviceToMarketingForm(d));
         setSForm(deviceToSlotsForm(d));
+        setOForm(deviceToOverlayForm(d));
       })
       .catch((e) => setErr((e as Error).message));
     // Playlists for the base-rotation picker. Best-effort: if it fails, the
@@ -145,7 +170,7 @@ export default function DeviceDetail() {
     };
   }, [bForm]);
 
-  if (!device || !bForm || !rForm || !dForm || !mForm || !sForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
+  if (!device || !bForm || !rForm || !dForm || !mForm || !sForm || !oForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -638,6 +663,138 @@ export default function DeviceDetail() {
             }
           >
             Save ad slot config
+          </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Overlay widgets</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Live clock and weather widgets layered over the base playlist (and visible
+          alongside running ads). Pick a corner so they don't clash with your ad layouts.
+        </div>
+
+        {/* Clock */}
+        <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 16, marginBottom: 16 }}>
+          <label className="row" style={{ gap: 8, fontSize: 14, marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={oForm.clockEnabled}
+              onChange={(e) => setOForm({ ...oForm, clockEnabled: e.target.checked })}
+              style={{ width: 'auto' }}
+            />
+            <span><strong>Clock</strong> — show current time</span>
+          </label>
+          {oForm.clockEnabled && (
+            <div className="row" style={{ gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label>Position</label>
+                <select
+                  value={oForm.clockPosition}
+                  onChange={(e) => setOForm({ ...oForm, clockPosition: e.target.value as Corner })}
+                >
+                  <option value="top-left">Top-left</option>
+                  <option value="top-right">Top-right</option>
+                  <option value="bottom-left">Bottom-left</option>
+                  <option value="bottom-right">Bottom-right</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label>Format</label>
+                <select
+                  value={oForm.clockFormat}
+                  onChange={(e) => setOForm({ ...oForm, clockFormat: e.target.value as '12h' | '24h' })}
+                >
+                  <option value="12h">12-hour (3:45 PM)</option>
+                  <option value="24h">24-hour (15:45)</option>
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Weather */}
+        <div style={{ marginBottom: 12 }}>
+          <label className="row" style={{ gap: 8, fontSize: 14, marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={oForm.weatherEnabled}
+              onChange={(e) => setOForm({ ...oForm, weatherEnabled: e.target.checked })}
+              style={{ width: 'auto' }}
+            />
+            <span><strong>Weather</strong> — current conditions + temperature</span>
+          </label>
+          {oForm.weatherEnabled && (
+            <>
+              <div className="row" style={{ gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label>Position</label>
+                  <select
+                    value={oForm.weatherPosition}
+                    onChange={(e) => setOForm({ ...oForm, weatherPosition: e.target.value as Corner })}
+                  >
+                    <option value="top-left">Top-left</option>
+                    <option value="top-right">Top-right</option>
+                    <option value="bottom-left">Bottom-left</option>
+                    <option value="bottom-right">Bottom-right</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Units</label>
+                  <select
+                    value={oForm.weatherUnits}
+                    onChange={(e) => setOForm({ ...oForm, weatherUnits: e.target.value as 'metric' | 'imperial' })}
+                  >
+                    <option value="metric">Metric (°C)</option>
+                    <option value="imperial">Imperial (°F)</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label>Location</label>
+                <input
+                  value={oForm.weatherLocation}
+                  onChange={(e) => setOForm({ ...oForm, weatherLocation: e.target.value })}
+                  placeholder='City name (e.g. "Listowel, ON") or "lat,lng"'
+                />
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  Falls back to the device's lat/lng (set in the brightness card) when blank.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            disabled={busy}
+            onClick={() =>
+              action(async () => {
+                if (oForm.weatherEnabled && !oForm.weatherLocation.trim() && (!device.latitude || !device.longitude)) {
+                  throw new Error('Weather needs either a location or lat/lng on the device.');
+                }
+                const updated = await devicesApi.update(device.id, {
+                  overlayClockEnabled: oForm.clockEnabled,
+                  overlayClockPosition: oForm.clockPosition,
+                  overlayClockFormat: oForm.clockFormat,
+                  overlayWeatherEnabled: oForm.weatherEnabled,
+                  overlayWeatherPosition: oForm.weatherPosition,
+                  overlayWeatherLocation: oForm.weatherLocation.trim() || null,
+                  overlayWeatherUnits: oForm.weatherUnits,
+                } as any);
+                setDevice(updated);
+                setOForm(deviceToOverlayForm(updated));
+              })
+            }
+          >
+            Save overlay widgets
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => action(() => devicesApi.republishBase(device.id))}
+            title="Re-publish the base program with the current overlay widget settings."
+          >
+            Apply to device
           </button>
         </div>
       </div>

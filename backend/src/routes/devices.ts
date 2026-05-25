@@ -5,6 +5,7 @@ import { authRequired, requireOrgRole } from '../middleware/auth';
 import { coexRegistry, DeviceConnInfo, DeviceProvider } from '../coex/registry';
 import { writeLog } from '../services/logs';
 import { orgClause, orgForInsert } from '../services/scope';
+import { republishBaseProgram } from '../services/vnnoxBaseProgram';
 
 const router = Router();
 router.use(authRequired);
@@ -40,6 +41,14 @@ interface DeviceRow {
   max_ads: number;
   ad_slot_seconds: number;
   base_playlist_id: string | null;
+  // Overlay widgets
+  overlay_clock_enabled: boolean;
+  overlay_clock_position: string;
+  overlay_clock_format: string;
+  overlay_weather_enabled: boolean;
+  overlay_weather_position: string;
+  overlay_weather_location: string | null;
+  overlay_weather_units: string;
   created_at: string;
   updated_at: string;
 }
@@ -104,6 +113,14 @@ const updateSchema = z.object({
   maxAds: z.number().int().min(0).max(64).optional(),
   adSlotSeconds: z.number().int().min(1).max(60).optional(),
   basePlaylistId: z.string().uuid().nullable().optional(),
+  // Overlay widgets
+  overlayClockEnabled: z.boolean().optional(),
+  overlayClockPosition: z.enum(['top-left','top-right','bottom-left','bottom-right']).optional(),
+  overlayClockFormat: z.enum(['12h','24h']).optional(),
+  overlayWeatherEnabled: z.boolean().optional(),
+  overlayWeatherPosition: z.enum(['top-left','top-right','bottom-left','bottom-right']).optional(),
+  overlayWeatherLocation: z.string().max(120).nullable().optional(),
+  overlayWeatherUnits: z.enum(['metric','imperial']).optional(),
 });
 
 router.get('/', async (req, res) => {
@@ -287,6 +304,13 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     max_ads: 'maxAds',
     ad_slot_seconds: 'adSlotSeconds',
     base_playlist_id: 'basePlaylistId',
+    overlay_clock_enabled: 'overlayClockEnabled',
+    overlay_clock_position: 'overlayClockPosition',
+    overlay_clock_format: 'overlayClockFormat',
+    overlay_weather_enabled: 'overlayWeatherEnabled',
+    overlay_weather_position: 'overlayWeatherPosition',
+    overlay_weather_location: 'overlayWeatherLocation',
+    overlay_weather_units: 'overlayWeatherUnits',
   };
   let i = 1;
   for (const [col, key] of Object.entries(mapping)) {
@@ -401,6 +425,26 @@ router.post('/:id/reboot', requireOrgRole('org_admin'), async (req, res) => {
   await client.reboot();
   await writeLog('warn', 'api', `device reboot triggered`, device.id, undefined, device.organization_id);
   res.json({ ok: true });
+});
+
+/**
+ * Republish the device's base program (base playlist + clock/weather
+ * overlays). Customer ad insertion programs are NOT touched. Returns the
+ * VNNOX response so the admin can confirm.
+ */
+router.post('/:id/republish-base', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
+  if (!device) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  try {
+    const result = await republishBaseProgram(device.id);
+    await writeLog('info', 'api', 'base program republished', device.id, undefined, device.organization_id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(502).json({ error: 'republish failed', message: (err as Error).message });
+  }
 });
 
 router.post('/:id/stop', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {

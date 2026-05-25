@@ -49,6 +49,14 @@ export interface Device {
   max_ads: number;
   ad_slot_seconds: number;
   base_playlist_id: string | null;
+  // Overlay widgets
+  overlay_clock_enabled: boolean;
+  overlay_clock_position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  overlay_clock_format: '12h' | '24h';
+  overlay_weather_enabled: boolean;
+  overlay_weather_position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  overlay_weather_location: string | null;
+  overlay_weather_units: 'metric' | 'imperial';
   created_at: string;
   updated_at: string;
 }

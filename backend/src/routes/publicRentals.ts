@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { query, withTx } from '../db';
 import { config } from '../config';
+import sharp from 'sharp';
 import { probeArtwork } from '../services/artworkValidation';
 import { newRentalEmail, sendEmail } from '../services/email';
 import {
@@ -362,6 +363,177 @@ router.post('/rentals/:id/artwork', upload.single('file'), async (req, res) => {
     warnings: probe.warnings,
     dimensions: probe.widthPx && probe.heightPx ? { width: probe.widthPx, height: probe.heightPx } : null,
     artworkUrl: publicUrl,
+  });
+});
+
+// --- Text-only ads: server-rendered PNG ---
+//
+// Customers who don't have artwork can type a short headline + pick
+// colours, and we render it to a PNG sized to the display. The rendered
+// file then flows through the same media+rental pipeline as an upload,
+// so VNNOX publish and the order-page preview work unchanged.
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+const textArtworkSchema = z.object({
+  text: z.string().min(1).max(120),
+  textColor: z.string().regex(HEX_COLOR, 'expect #RRGGBB'),
+  bgColor:   z.string().regex(HEX_COLOR, 'expect #RRGGBB'),
+  /**
+   * 'sans' / 'sans-bold' / 'serif'. Kept narrow so we can guarantee the
+   * font name resolves to something rasterizable on the Railway box.
+   */
+  fontFamily: z.enum(['sans', 'sans-bold', 'serif']).default('sans-bold'),
+});
+
+/**
+ * Escape characters that have special meaning inside SVG text content.
+ */
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Build an SVG with the headline horizontally + vertically centred and
+ * auto-sized so it fills ~70% of the panel width. sharp rasterises this
+ * to PNG at the device's native resolution.
+ */
+function buildTextArtworkSvg(args: {
+  text: string;
+  textColor: string;
+  bgColor: string;
+  fontFamily: string;
+  widthPx: number;
+  heightPx: number;
+}): string {
+  const fontMap: Record<string, string> = {
+    'sans':      "Helvetica, Arial, 'DejaVu Sans', sans-serif",
+    'sans-bold': "Helvetica, Arial, 'DejaVu Sans', sans-serif",
+    'serif':     "Georgia, 'DejaVu Serif', serif",
+  };
+  const fontFamily = fontMap[args.fontFamily] || fontMap['sans-bold'];
+  const fontWeight = args.fontFamily === 'sans-bold' ? '700' : '400';
+
+  // Rough text-fitting: pick a font size so the headline spans ~80% of
+  // the panel width assuming an average glyph aspect of 0.55 (works well
+  // for Helvetica/Arial). Clamp between height/8 and height (so a one-
+  // character headline doesn't blow up to silly proportions on a square
+  // panel). The viewer can always upload a real PNG if they want
+  // pixel-perfect control.
+  const targetWidthPx = args.widthPx * 0.85;
+  const fitByWidth = targetWidthPx / Math.max(1, args.text.length * 0.55);
+  const fitByHeight = args.heightPx * 0.65;
+  const fontSize = Math.max(
+    Math.floor(args.heightPx / 8),
+    Math.min(fitByHeight, fitByWidth),
+  );
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="${args.widthPx}" height="${args.heightPx}"
+     viewBox="0 0 ${args.widthPx} ${args.heightPx}">
+  <rect width="100%" height="100%" fill="${args.bgColor}"/>
+  <text x="50%" y="50%"
+        font-family="${fontFamily}" font-weight="${fontWeight}"
+        font-size="${Math.round(fontSize)}"
+        fill="${args.textColor}"
+        text-anchor="middle" dominant-baseline="middle">${escapeXml(args.text)}</text>
+</svg>`;
+}
+
+router.post('/rentals/:id/text-artwork', async (req, res) => {
+  const data = textArtworkSchema.parse(req.body);
+
+  const r = await query<{
+    rental_id: string;
+    device_id: string;
+    status: string;
+    width_px: number | null;
+    height_px: number | null;
+    organization_id: string;
+  }>(
+    `SELECT r.id AS rental_id, r.device_id, r.status,
+            d.width_px, d.height_px, d.organization_id
+       FROM rentals r JOIN devices d ON d.id = r.device_id
+      WHERE r.id = $1`,
+    [req.params.id],
+  );
+  if (r.rows.length === 0) {
+    res.status(404).json({ error: 'rental not found' });
+    return;
+  }
+  const rental = r.rows[0];
+  if (!['pending_payment', 'pending_review'].includes(rental.status)) {
+    res.status(409).json({ error: `rental is ${rental.status}; artwork can only be changed before approval` });
+    return;
+  }
+
+  // Fall back to 1920×1080 if the device doesn't have dimensions on file
+  // — better to produce a usable PNG than to reject the request.
+  const widthPx  = rental.width_px  || 1920;
+  const heightPx = rental.height_px || 1080;
+
+  const svg = buildTextArtworkSvg({
+    text: data.text,
+    textColor: data.textColor,
+    bgColor: data.bgColor,
+    fontFamily: data.fontFamily,
+    widthPx,
+    heightPx,
+  });
+
+  const filename = `${crypto.randomUUID()}.png`;
+  const destPath = path.join(MEDIA_DIR, filename);
+  await sharp(Buffer.from(svg))
+    .png()
+    .toFile(destPath);
+
+  const stat = await fs.promises.stat(destPath);
+  const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${filename}`;
+
+  const media = await query<{ id: string }>(
+    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes,
+                        width_px, height_px, storage_url, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+     RETURNING id`,
+    [
+      rental.organization_id,
+      filename,
+      `text-ad-${rental.rental_id.slice(0, 8)}.png`,
+      'image/png',
+      stat.size,
+      widthPx,
+      heightPx,
+      publicUrl,
+      JSON.stringify({
+        source: 'rental-text',
+        rentalId: rental.rental_id,
+        text: data.text,
+        textColor: data.textColor,
+        bgColor: data.bgColor,
+        fontFamily: data.fontFamily,
+      }),
+    ],
+  );
+
+  await query(
+    `UPDATE rentals
+        SET media_id = $1,
+            artwork_warnings = '[]'::jsonb,
+            updated_at = NOW()
+      WHERE id = $2`,
+    [media.rows[0].id, rental.rental_id],
+  );
+
+  res.json({
+    ok: true,
+    mediaId: media.rows[0].id,
+    artworkUrl: publicUrl,
+    dimensions: { width: widthPx, height: heightPx },
   });
 });
 

@@ -70,6 +70,8 @@ export const devices = {
     api<{ ok: boolean }>(`/devices/${id}/brightness`, { body: { brightness } }),
   reboot: (id: string) => api<{ ok: boolean }>(`/devices/${id}/reboot`, { method: 'POST' }),
   stop: (id: string) => api<{ ok: boolean }>(`/devices/${id}/stop`, { method: 'POST' }),
+  /** Re-publish the device's base program (base playlist + overlay widgets). */
+  republishBase: (id: string) => api<{ ok: boolean }>(`/devices/${id}/republish-base`, { body: {} }),
   bulkImport: (rows: Array<{
     name: string;
     latitude?: number | null;

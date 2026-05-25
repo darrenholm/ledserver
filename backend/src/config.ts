@@ -133,6 +133,17 @@ export const config = {
     bridgeSecret: process.env.LED_SHOP_BRIDGE_SECRET ?? '',
   },
 
+  // Self-serve advertiser portal: customer JWTs are minted by shop-api on
+  // holmgraphics.ca/login, then sent to /api/public/my-rentals here.
+  // The secret MUST match shop-api's JWT_SECRET; if they drift, every
+  // customer call to the LED app gets a 401.
+  customerJwt: {
+    // Falls back to the same JWT_SECRET we use for staff so a single-secret
+    // setup still works; production should set CUSTOMER_JWT_SECRET explicitly
+    // to the same value as shop-api's JWT_SECRET.
+    secret: process.env.CUSTOMER_JWT_SECRET || jwtSecret,
+  },
+
   postgres: pgConfig,
 
   mediaPublicBaseUrl: process.env.MEDIA_PUBLIC_BASE_URL ?? 'http://localhost:8080/media',

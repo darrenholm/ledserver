@@ -8,14 +8,17 @@ import { query, withTx } from '../db';
 import { config } from '../config';
 import sharp from 'sharp';
 import { probeArtwork } from '../services/artworkValidation';
+import { optionalAdvertiser, requireAdvertiser } from '../middleware/advertiserAuth';
 import { newRentalEmail, sendEmail } from '../services/email';
 import {
   chargeViaShopApi,
   createProjectViaShopApi,
   createSalesReceiptViaShopApi,
+  lookupClientViaShopApi,
   ShopApiError,
   upsertClientViaShopApi,
 } from '../services/shopApiClient';
+import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -285,25 +288,135 @@ router.post('/rentals', async (req, res) => {
   });
 });
 
-// --- Artwork upload (after booking is created, before payment / review) ---
+// --- Artwork upload (booking flow OR mid-rental swap for self-serve advertisers) ---
+//
+// Two callers, one endpoint:
+//
+//   1. Booking flow (pre-approval): rental.id is the secret. No auth header.
+//      Allowed statuses: pending_payment, pending_review. Just attaches the
+//      asset; admin will review + approve in the usual flow.
+//
+//   2. Self-serve swap (post-approval): caller sends a customer JWT in the
+//      Authorization header. The middleware sets req.advertiser. We confirm
+//      the JWT matches rentals.project_client_id, then branch on the
+//      client's trust_self_serve_ads flag:
+//        - TRUE  → stay active, immediately republish to VNNOX.
+//        - FALSE → flip back to pending_review, clear the VNNOX program,
+//                  admin reviews the new art before it goes live again.
 
-router.post('/rentals/:id/artwork', upload.single('file'), async (req, res) => {
+/**
+ * Determine what to do with the upload given who's asking and the rental's
+ * current status. Encapsulates the access rules so both file-upload and
+ * text-ad swap routes apply them identically.
+ */
+async function authorizeArtworkChange(opts: {
+  rental: { id: string; status: string; project_client_id: number | null; advertiser_email: string };
+  advertiser: { id: number; email: string } | undefined;
+}): Promise<
+  | { kind: 'allow-booking' }                                 // pre-approval, no auth
+  | { kind: 'allow-self-serve'; trusted: boolean }            // logged-in advertiser, post-approval
+  | { kind: 'deny'; reason: string; status: number }
+> {
+  const { rental, advertiser } = opts;
+
+  if (['pending_payment', 'pending_review'].includes(rental.status)) {
+    // Pre-approval: rental id is the secret. No auth needed.
+    return { kind: 'allow-booking' };
+  }
+
+  if (!['approved', 'active'].includes(rental.status)) {
+    return { kind: 'deny', status: 409, reason: `rental is ${rental.status}; artwork is locked` };
+  }
+
+  // Approved/active swap path — require a logged-in advertiser whose identity
+  // matches the rental owner. Match by client_id first; legacy rentals with
+  // NULL project_client_id fall back to advertiser_email.
+  if (!advertiser) {
+    return { kind: 'deny', status: 401, reason: 'sign in to change a running ad' };
+  }
+  const matchesId    = rental.project_client_id && rental.project_client_id === advertiser.id;
+  const matchesEmail = !rental.project_client_id &&
+                       rental.advertiser_email?.toLowerCase() === advertiser.email.toLowerCase();
+  if (!matchesId && !matchesEmail) {
+    return { kind: 'deny', status: 403, reason: 'this rental belongs to a different account' };
+  }
+
+  // Ask shop-api whether this client is trusted for instant publish.
+  let trusted = true;
+  try {
+    const client = await lookupClientViaShopApi(advertiser.id);
+    trusted = client.trust_self_serve_ads !== false;
+  } catch (e) {
+    // If shop-api is unreachable, fall back to the safer behaviour:
+    // re-review the change. Better to ping the admin than to publish
+    // something we couldn't verify.
+    // eslint-disable-next-line no-console
+    console.warn('lookupClient failed for advertiser', advertiser.id, e);
+    trusted = false;
+  }
+  return { kind: 'allow-self-serve', trusted };
+}
+
+/**
+ * Apply a status transition + optional republish after a successful art swap.
+ * Called by both the file-upload and text-ad routes.
+ */
+async function applyPostSwapState(
+  rentalId: string,
+  decision: { kind: 'allow-booking' } | { kind: 'allow-self-serve'; trusted: boolean },
+): Promise<{ mode: 'pre-approval' | 'instant-republish' | 'pending-review-again' }> {
+  if (decision.kind === 'allow-booking') {
+    return { mode: 'pre-approval' };
+  }
+  if (decision.trusted) {
+    // Republish in the background — the customer's HTTP response shouldn't
+    // wait on VNNOX. publishApprovedAdToVnnox sets status=active on success
+    // and stamps publish_error on failure; the customer's "my-ads" view
+    // shows that field so they know if their republish hit a snag.
+    void publishApprovedAdToVnnox(rentalId).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('self-serve publish failed for rental', rentalId, err);
+    });
+    return { mode: 'instant-republish' };
+  }
+  // Untrusted: move back to pending_review so admin sees the change. Clear
+  // the live VNNOX program ID so the next admin approval republishes
+  // cleanly (rather than thinking the old asset is still on the device).
+  await query(
+    `UPDATE rentals
+        SET status = 'pending_review',
+            vnnox_program_id = NULL,
+            published_at = NULL,
+            updated_at = NOW()
+      WHERE id = $1`,
+    [rentalId],
+  );
+  void sendNewRentalNotification(rentalId).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('sendNewRentalNotification failed:', err);
+  });
+  return { mode: 'pending-review-again' };
+}
+
+router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'no file uploaded' });
     return;
   }
 
-  // Look up rental + device for dimension targets.
+  // Look up rental + device + ownership for dimension targets and auth.
   const r = await query<{
     rental_id: string;
     device_id: string;
     status: string;
+    project_client_id: number | null;
     advertiser_email: string;
     width_px: number | null;
     height_px: number | null;
     organization_id: string;
   }>(
-    `SELECT r.id AS rental_id, r.device_id, r.status, r.advertiser_email,
+    `SELECT r.id AS rental_id, r.device_id, r.status,
+            r.project_client_id, r.advertiser_email,
             d.width_px, d.height_px, d.organization_id
        FROM rentals r JOIN devices d ON d.id = r.device_id
       WHERE r.id = $1`,
@@ -315,9 +428,19 @@ router.post('/rentals/:id/artwork', upload.single('file'), async (req, res) => {
     return;
   }
   const rental = r.rows[0];
-  if (!['pending_payment', 'pending_review'].includes(rental.status)) {
+
+  const decision = await authorizeArtworkChange({
+    rental: {
+      id: rental.rental_id,
+      status: rental.status,
+      project_client_id: rental.project_client_id,
+      advertiser_email: rental.advertiser_email,
+    },
+    advertiser: req.advertiser,
+  });
+  if (decision.kind === 'deny') {
     fs.promises.unlink(req.file.path).catch(() => undefined);
-    res.status(409).json({ error: `rental is ${rental.status}; artwork can only be uploaded before approval` });
+    res.status(decision.status).json({ error: decision.reason });
     return;
   }
 
@@ -357,12 +480,15 @@ router.post('/rentals/:id/artwork', upload.single('file'), async (req, res) => {
     [media.rows[0].id, JSON.stringify(probe.warnings), rental.rental_id],
   );
 
+  const post = await applyPostSwapState(rental.rental_id, decision);
+
   res.json({
     ok: true,
     mediaId: media.rows[0].id,
     warnings: probe.warnings,
     dimensions: probe.widthPx && probe.heightPx ? { width: probe.widthPx, height: probe.heightPx } : null,
     artworkUrl: publicUrl,
+    mode: post.mode,
   });
 });
 
@@ -445,18 +571,21 @@ function buildTextArtworkSvg(args: {
 </svg>`;
 }
 
-router.post('/rentals/:id/text-artwork', async (req, res) => {
+router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) => {
   const data = textArtworkSchema.parse(req.body);
 
   const r = await query<{
     rental_id: string;
     device_id: string;
     status: string;
+    project_client_id: number | null;
+    advertiser_email: string;
     width_px: number | null;
     height_px: number | null;
     organization_id: string;
   }>(
     `SELECT r.id AS rental_id, r.device_id, r.status,
+            r.project_client_id, r.advertiser_email,
             d.width_px, d.height_px, d.organization_id
        FROM rentals r JOIN devices d ON d.id = r.device_id
       WHERE r.id = $1`,
@@ -467,8 +596,18 @@ router.post('/rentals/:id/text-artwork', async (req, res) => {
     return;
   }
   const rental = r.rows[0];
-  if (!['pending_payment', 'pending_review'].includes(rental.status)) {
-    res.status(409).json({ error: `rental is ${rental.status}; artwork can only be changed before approval` });
+
+  const decision = await authorizeArtworkChange({
+    rental: {
+      id: rental.rental_id,
+      status: rental.status,
+      project_client_id: rental.project_client_id,
+      advertiser_email: rental.advertiser_email,
+    },
+    advertiser: req.advertiser,
+  });
+  if (decision.kind === 'deny') {
+    res.status(decision.status).json({ error: decision.reason });
     return;
   }
 
@@ -529,11 +668,14 @@ router.post('/rentals/:id/text-artwork', async (req, res) => {
     [media.rows[0].id, rental.rental_id],
   );
 
+  const post = await applyPostSwapState(rental.rental_id, decision);
+
   res.json({
     ok: true,
     mediaId: media.rows[0].id,
     artworkUrl: publicUrl,
     dimensions: { width: widthPx, height: heightPx },
+    mode: post.mode,
   });
 });
 
@@ -668,9 +810,98 @@ router.post('/rentals/:id/pay', async (req, res) => {
   }
 });
 
+// --- Self-serve advertiser portal: list "my rentals" ---
+//
+// Authenticated via the customer JWT minted on holmgraphics.ca/login.
+// Returns the logged-in client's rentals grouped into three buckets so
+// the UI can render "Currently running / Upcoming / Past" without
+// reshuffling on the client side.
+//
+// Back-fill: rentals booked before the project-link feature (or before
+// this advertiser first logged in) have project_client_id = NULL. On
+// every call we opportunistically link any rentals where advertiser_email
+// matches the authenticated email so the next call picks them up cleanly.
+
+router.get('/my-rentals', requireAdvertiser, async (req, res) => {
+  const adv = req.advertiser!;
+
+  // Best-effort back-fill: link orphaned rentals by email. Case-insensitive
+  // since clients.email is canonicalised lower-case but advertiser_email
+  // captures whatever the booking form typed.
+  await query(
+    `UPDATE rentals
+        SET project_client_id = $1, updated_at = NOW()
+      WHERE project_client_id IS NULL
+        AND LOWER(advertiser_email) = LOWER($2)`,
+    [adv.id, adv.email],
+  );
+
+  const { rows } = await query<{
+    id: string;
+    status: string;
+    start_date: string | null;
+    end_date: string | null;
+    start_time: string;
+    end_time: string;
+    amount_cents: number;
+    currency: string;
+    artwork_warnings: string[];
+    fit_mode: string;
+    paid_at: string | null;
+    device_name: string;
+    device_location: string | null;
+    device_width_px: number | null;
+    device_height_px: number | null;
+    storage_url: string | null;
+    media_mime: string | null;
+    published_at: string | null;
+    publish_error: string | null;
+    review_notes: string | null;
+  }>(
+    `SELECT r.id, r.status, r.start_date, r.end_date, r.start_time, r.end_time,
+            r.amount_cents, r.currency, r.artwork_warnings, r.fit_mode,
+            r.paid_at, r.published_at, r.publish_error, r.review_notes,
+            d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
+            m.storage_url, m.mime_type AS media_mime
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN media m ON m.id = r.media_id
+      WHERE r.project_client_id = $1
+      ORDER BY COALESCE(r.start_date, r.created_at::date) DESC`,
+    [adv.id],
+  );
+
+  // Bucket logic — runs server-side so the client can render directly.
+  const today = new Date().toISOString().slice(0, 10);
+  const running: typeof rows = [];
+  const upcoming: typeof rows = [];
+  const past: typeof rows = [];
+  for (const r of rows) {
+    if (r.status === 'active') {
+      running.push(r);
+    } else if (r.status === 'approved' && r.start_date && r.start_date > today) {
+      upcoming.push(r);
+    } else if (['pending_payment', 'pending_review'].includes(r.status)) {
+      // Treat these as upcoming from the customer's perspective — they
+      // haven't gone live yet but they're not in the "past" bucket either.
+      upcoming.push(r);
+    } else {
+      past.push(r);
+    }
+  }
+
+  res.json({
+    advertiser: { id: adv.id, name: adv.name, email: adv.email, company: adv.company },
+    running,
+    upcoming,
+    past,
+  });
+});
+
 // --- Status (renter-facing) ---
 
-router.get('/rentals/:id', async (req, res) => {
+router.get('/rentals/:id', optionalAdvertiser, async (req, res) => {
   const { rows } = await query<{
     id: string;
     status: string;

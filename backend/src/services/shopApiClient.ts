@@ -184,3 +184,55 @@ export async function createSalesReceiptViaShopApi(
   }
   return body as CreateSalesReceiptResult;
 }
+
+// ─── Client trust lookup (for self-serve ad swaps) ──────────────────────────
+
+export interface ClientLookupResult {
+  id: number;
+  email: string;
+  company: string | null;
+  name: string;
+  trust_self_serve_ads: boolean;
+}
+
+export async function lookupClientViaShopApi(clientId: number): Promise<ClientLookupResult> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/lookup-client'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify({ clientId }),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api lookup-client failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as ClientLookupResult;
+}
+
+export async function setClientTrustViaShopApi(clientId: number, trust: boolean): Promise<{ id: number; trust_self_serve_ads: boolean }> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/set-client-trust'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify({ clientId, trust }),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api set-client-trust failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as { id: number; trust_self_serve_ads: boolean };
+}

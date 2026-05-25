@@ -35,10 +35,18 @@ export default function RentalDetail() {
   const [notes, setNotes] = useState('');
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentRef, setPaymentRef] = useState('');
+  // Cached from shop-api: whether this rental's client is allowed to swap
+  // ads without re-review. Loaded lazily after the rental itself; nulled
+  // out for legacy rentals with no project_client_id link yet.
+  const [trust, setTrust] = useState<boolean | null>(null);
+  const [trustLoaded, setTrustLoaded] = useState(false);
 
   const refresh = () => {
     if (!id) return;
     rentalsApi.get(id).then(setRental).catch((e) => setErr((e as Error).message));
+    rentalsApi.getClientTrust(id)
+      .then((t) => { setTrust(t.trust); setTrustLoaded(true); })
+      .catch(() => setTrustLoaded(true));
   };
 
   useEffect(() => {
@@ -143,6 +151,34 @@ export default function RentalDetail() {
                 Pushes (or refreshes) the VNNOX insertion program with the current run window and daypart.
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Self-serve trust: hidden until the rental is paid + linked to a client. */}
+      {trustLoaded && trust !== null && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Self-serve trust</h3>
+          <div className="stack">
+            <div className="muted" style={{ fontSize: 13 }}>
+              When ON, this client can change their ad from the /advertise/my-ads
+              portal and it goes live immediately. When OFF, every swap moves the
+              rental back to pending review and pauses the on-screen ad until you
+              approve the new art.
+            </div>
+            <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={!!trust}
+                disabled={busy}
+                onChange={(e) => action(async () => {
+                  const next = e.target.checked;
+                  const result = await rentalsApi.setClientTrust(rental.id, next);
+                  setTrust(result.trust);
+                })}
+              />
+              <span><strong>{trust ? 'Trusted' : 'Re-review required'}</strong> — flip for this client account</span>
+            </label>
           </div>
         </div>
       )}

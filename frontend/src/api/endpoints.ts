@@ -154,6 +154,10 @@ export const rentals = {
   reject: (id: string, notes?: string) =>
     api<AdminRental>(`/rentals/${id}/reject`, { body: { notes } }),
   republish: (id: string) => api<AdminRental>(`/rentals/${id}/republish`, { body: {} }),
+  getClientTrust: (id: string) =>
+    api<{ clientId: number | null; trust: boolean | null }>(`/rentals/${id}/client-trust`),
+  setClientTrust: (id: string, trust: boolean) =>
+    api<{ clientId: number; trust: boolean }>(`/rentals/${id}/client-trust`, { body: { trust } }),
 };
 
 export const logs = {

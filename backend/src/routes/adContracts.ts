@@ -366,7 +366,14 @@ router.post('/by-media', requireRole('super_admin', 'org_admin'), async (req, re
        FROM rentals r
        LEFT JOIN ad_contracts c ON c.id = r.contract_id
        JOIN devices d ON d.id = r.device_id
-      WHERE r.media_id = ANY($1::uuid[]) ${clause}
+      WHERE r.media_id = ANY($1::uuid[])
+        -- Suppress orphaned synthetic rentals: rows the admin attached
+        -- via attach-media and then detached. They're zombies that still
+        -- reference the media file but have no contract; without this
+        -- filter they'd duplicate the visible attribution rows.
+        AND (r.contract_id IS NOT NULL
+             OR r.advertiser_email <> 'attributed@holmgraphics.ca')
+        ${clause}
       ORDER BY r.created_at DESC`,
     [mediaIds, ...params],
   );
@@ -448,9 +455,29 @@ router.post('/:id/attach-rental', requireRole('super_admin', 'org_admin'), async
   res.json({ ok: true });
 });
 
+// Sentinel email stamped onto rental rows that are created via attach-media
+// (i.e. they're pure bookkeeping for contract attribution, not real /advertise
+// bookings with payment + customer info).
+const ATTRIBUTED_SENTINEL_EMAIL = 'attributed@holmgraphics.ca';
+
 router.post('/:id/detach-rental', requireRole('super_admin', 'org_admin'), async (req, res) => {
   const { rentalId } = attachSchema.parse(req.body);
-  await query(`UPDATE rentals SET contract_id = NULL, updated_at = NOW() WHERE id = $1 AND contract_id = $2`, [rentalId, req.params.id]);
+  // Synthetic rentals (created by attach-media) have no independent value —
+  // they're just an attribution row. Real /advertise bookings have payment
+  // history we must preserve. Discriminate on the sentinel email.
+  const { rows } = await query<{ advertiser_email: string }>(
+    `SELECT advertiser_email FROM rentals WHERE id = $1 AND contract_id = $2`,
+    [rentalId, req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'rental not attached to this contract' });
+    return;
+  }
+  if (rows[0].advertiser_email === ATTRIBUTED_SENTINEL_EMAIL) {
+    await query(`DELETE FROM rentals WHERE id = $1`, [rentalId]);
+  } else {
+    await query(`UPDATE rentals SET contract_id = NULL, updated_at = NOW() WHERE id = $1`, [rentalId]);
+  }
   res.status(204).end();
 });
 

@@ -73,6 +73,10 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
     where.push(`r.device_id = $${i++}`);
     values.push(params.deviceId);
   }
+  // Hide orphaned synthetic rentals (attach-media → detach left behind).
+  // They have no contract and no real payment history — they'd only clutter
+  // the queue.
+  where.push(`(r.contract_id IS NOT NULL OR r.advertiser_email <> 'attributed@holmgraphics.ca')`);
   values.push(params.limit);
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const { rows } = await query<RentalRow>(

@@ -146,6 +146,10 @@ export default function AdContractDetail() {
     try {
       await adContractsApi.attachMedia(contract.id, {
         mediaId,
+        // Stamp the rental row with the company name (falling back to the
+        // contact name) so it reads correctly on pages that don't do the
+        // contract->client lookup.
+        advertiserName: client?.company || client?.name || undefined,
         startDate: pickerStart || undefined,
         endDate: pickerEnd || undefined,
       });
@@ -224,9 +228,9 @@ export default function AdContractDetail() {
           </h2>
           <div className="muted" style={{ fontSize: 14 }}>
             <strong style={{ color: 'var(--text)' }}>
-              {client?.name ?? `Client #${contract.client_id}`}
+              {client?.company || client?.name || `Client #${contract.client_id}`}
             </strong>
-            {client?.company && client.company !== client.name && ` (${client.company})`}
+            {client?.company && client.name && client.name !== client.company && ` · ${client.name}`}
             {' · '}
             <Link to={`/devices/${contract.device_id}`}>
               {contract.device_name ?? contract.device_id.slice(0, 8)}
@@ -432,7 +436,7 @@ export default function AdContractDetail() {
                   </td>
                   <td>{r.start_time?.slice(0, 5)}–{r.end_time?.slice(0, 5)}</td>
                   <td>${(r.amount_cents / 100).toFixed(2)} {r.currency}</td>
-                  <td>{r.advertiser_name}</td>
+                  <td>{client?.company || client?.name || r.advertiser_name}</td>
                   <td>
                     {r.artwork_url && (
                       <a href={r.artwork_url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>

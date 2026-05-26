@@ -44,7 +44,10 @@ export default function AdContracts() {
           const id = missing[i];
           const r = results[i];
           if (r.status === 'fulfilled') {
-            next[id] = r.value.name;
+            // Contracts are business agreements — show the company name
+            // (e.g. "HDTV") instead of the individual contact. Falls back to
+            // the contact name when no company is set on the client.
+            next[id] = r.value.company || r.value.name;
           } else {
             // Cache the failure so we don't hammer shop-api for an unknown id.
             next[id] = `Client #${id}`;

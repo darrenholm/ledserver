@@ -54,8 +54,15 @@ const SELECT_COLS = `id, username, role, organization_id, created_at, updated_at
 
 router.get('/', requireOrgRole('org_admin'), async (req, res) => {
   const { clause, params } = orgClause(req, 'organization_id', 1);
+  // super_admins are global (organization_id NULL) and don't match any
+  // org filter, so a scoped Users page would hide them and look empty.
+  // When a super_admin is viewing, include them in the result regardless
+  // of the org scope. org_admins still see only their own org.
+  const includeSuperAdmins = req.user?.role === 'super_admin';
+  const superClause = includeSuperAdmins ? ` OR role = 'super_admin'` : '';
   const { rows } = await query<UserRow>(
-    `SELECT ${SELECT_COLS} FROM users WHERE 1=1 ${clause} ORDER BY username ASC`,
+    `SELECT ${SELECT_COLS} FROM users WHERE (1=1 ${clause}) ${superClause}
+      ORDER BY CASE WHEN role = 'super_admin' THEN 0 ELSE 1 END, username ASC`,
     params,
   );
   res.json(rows);

@@ -153,7 +153,14 @@ export const publicRentals = {
 };
 
 export const rentals = {
-  list: (status?: string) => api<AdminRental[]>(`/rentals${status ? `?status=${status}` : ''}`),
+  list: (params: { status?: string; deviceId?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.status) q.set('status', params.status);
+    if (params.deviceId) q.set('deviceId', params.deviceId);
+    if (params.limit !== undefined) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return api<AdminRental[]>(`/rentals${qs ? `?${qs}` : ''}`);
+  },
   get: (id: string) => api<AdminRental>(`/rentals/${id}`),
   markPaid: (id: string, reference: string, provider = 'manual') =>
     api<{ id: string; status: string }>(`/rentals/${id}/mark-paid`, { body: { reference, provider } }),
@@ -162,6 +169,8 @@ export const rentals = {
   reject: (id: string, notes?: string) =>
     api<AdminRental>(`/rentals/${id}/reject`, { body: { notes } }),
   republish: (id: string) => api<AdminRental>(`/rentals/${id}/republish`, { body: {} }),
+  reschedule: (id: string, args: { startDate?: string; endDate?: string; startTime?: string; endTime?: string }) =>
+    api<AdminRental>(`/rentals/${id}/schedule`, { method: 'PATCH', body: args }),
   getClientTrust: (id: string) =>
     api<{ clientId: number | null; trust: boolean | null }>(`/rentals/${id}/client-trust`),
   setClientTrust: (id: string, trust: boolean) =>
@@ -298,8 +307,8 @@ export const adContracts = {
     api<void>(`/ad-contracts/${contractId}/detach-rental`, { body: { rentalId } }),
   unattachedRentals: (deviceId: string) =>
     api<UnattachedRental[]>(`/ad-contracts/unattached-rentals/${deviceId}`),
-  attachMedia: (contractId: string, mediaId: string, advertiserName?: string) =>
-    api<{ rentalId: string }>(`/ad-contracts/${contractId}/attach-media`, { body: { mediaId, advertiserName } }),
+  attachMedia: (contractId: string, args: { mediaId: string; advertiserName?: string; startDate?: string; endDate?: string }) =>
+    api<{ rentalId: string }>(`/ad-contracts/${contractId}/attach-media`, { body: args }),
 };
 
 export const logs = {

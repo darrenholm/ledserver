@@ -233,6 +233,7 @@ export interface PublicRentalStatus {
 
 export interface AdminRental extends PublicRentalStatus {
   device_id: string;
+  contract_id: string | null;
   advertiser_phone: string | null;
   advertiser_business: string | null;
   advertiser_notes: string | null;

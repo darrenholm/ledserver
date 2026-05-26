@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { adContracts as adContractsApi, media as mediaApi, clients as clientsApi, type AdContract, type ClientFull, type UnattachedRental } from '../api/endpoints';
+import { adContracts as adContractsApi, media as mediaApi, clients as clientsApi, rentals as rentalsApi, type AdContract, type ClientFull, type UnattachedRental } from '../api/endpoints';
 import type { Media } from '../types';
 
 /**
@@ -36,6 +36,13 @@ export default function AdContractDetail() {
   const [mediaLib, setMediaLib] = useState<Media[]>([]);
   const [mediaSearch, setMediaSearch] = useState('');
   const [mediaBusy, setMediaBusy] = useState<string | null>(null); // media id being attached
+  // Pre-program: dates applied to whatever gets attached next (defaults to contract window).
+  const [pickerStart, setPickerStart] = useState('');
+  const [pickerEnd, setPickerEnd] = useState('');
+  // Inline date edit on the rentals table.
+  const [editingRental, setEditingRental] = useState<string | null>(null);
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -116,8 +123,14 @@ export default function AdContractDetail() {
   };
 
   const openMediaPicker = async () => {
+    if (!contract) return;
     setShowMediaPicker(true);
     setMediaSearch('');
+    // Seed the picker dates with the contract window so the common case
+    // (ad runs the whole contract) is one click. Admin can change them
+    // for pre-programmed ads with a narrower window.
+    setPickerStart(contract.start_date);
+    setPickerEnd(contract.end_date ?? '');
     try {
       const list = await mediaApi.list();
       setMediaLib(list);
@@ -131,13 +144,41 @@ export default function AdContractDetail() {
     setMediaBusy(mediaId);
     setErr(null);
     try {
-      await adContractsApi.attachMedia(contract.id, mediaId);
+      await adContractsApi.attachMedia(contract.id, {
+        mediaId,
+        startDate: pickerStart || undefined,
+        endDate: pickerEnd || undefined,
+      });
       await refreshContract();
       // Don't close the picker — admin may want to add several files in a row.
     } catch (e) {
       setErr((e as Error).message);
     } finally {
       setMediaBusy(null);
+    }
+  };
+
+  const startEditRental = (r: { id: string; start_date: string | null; end_date: string | null }) => {
+    setEditingRental(r.id);
+    setEditStart(r.start_date ?? '');
+    setEditEnd(r.end_date ?? '');
+  };
+
+  const saveRentalDates = async () => {
+    if (!editingRental) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await rentalsApi.reschedule(editingRental, {
+        startDate: editStart || undefined,
+        endDate:   editEnd   || undefined,
+      });
+      setEditingRental(null);
+      await refreshContract();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -367,9 +408,27 @@ export default function AdContractDetail() {
                 <tr key={r.id} style={{ borderBottom: '1px solid #eee' }}>
                   <td>{r.status}</td>
                   <td>
-                    {r.start_date && r.end_date
-                      ? `${r.start_date} → ${r.end_date}`
-                      : <span className="muted">unscheduled</span>}
+                    {editingRental === r.id ? (
+                      <div className="row" style={{ gap: 4 }}>
+                        <input
+                          type="date"
+                          value={editStart}
+                          onChange={(e) => setEditStart(e.target.value)}
+                          style={{ fontSize: 12, padding: '2px 4px', width: 130 }}
+                        />
+                        <span>→</span>
+                        <input
+                          type="date"
+                          value={editEnd}
+                          onChange={(e) => setEditEnd(e.target.value)}
+                          style={{ fontSize: 12, padding: '2px 4px', width: 130 }}
+                        />
+                      </div>
+                    ) : r.start_date && r.end_date ? (
+                      `${r.start_date} → ${r.end_date}`
+                    ) : (
+                      <span className="muted">unscheduled</span>
+                    )}
                   </td>
                   <td>{r.start_time?.slice(0, 5)}–{r.end_time?.slice(0, 5)}</td>
                   <td>${(r.amount_cents / 100).toFixed(2)} {r.currency}</td>
@@ -385,14 +444,31 @@ export default function AdContractDetail() {
                     <Link to={`/rentals/${r.id}`} style={{ fontSize: 13 }}>Open →</Link>
                   </td>
                   <td>
-                    <button
-                      onClick={() => detach(r.id)}
-                      disabled={busy}
-                      style={{ fontSize: 12, padding: '2px 8px' }}
-                      title="Unlink from this contract (the ad keeps running, just isn't attributed)"
-                    >
-                      Detach
-                    </button>
+                    {editingRental === r.id ? (
+                      <div className="row" style={{ gap: 4 }}>
+                        <button onClick={saveRentalDates} disabled={busy} style={{ fontSize: 12, padding: '2px 8px' }}>Save</button>
+                        <button onClick={() => setEditingRental(null)} disabled={busy} style={{ fontSize: 12, padding: '2px 8px' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="row" style={{ gap: 4 }}>
+                        <button
+                          onClick={() => startEditRental(r)}
+                          disabled={busy}
+                          style={{ fontSize: 12, padding: '2px 8px' }}
+                          title="Re-schedule this ad's run window"
+                        >
+                          Edit dates
+                        </button>
+                        <button
+                          onClick={() => detach(r.id)}
+                          disabled={busy}
+                          style={{ fontSize: 12, padding: '2px 8px' }}
+                          title="Unlink from this contract (the ad keeps running, just isn't attributed)"
+                        >
+                          Detach
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -425,6 +501,37 @@ export default function AdContractDetail() {
               linked to this contract and (best-effort) mirrors the file into the
               client's <code>LED Ads</code> folder.
             </div>
+
+            {/* Pre-program: the dates applied to whatever you attach next. */}
+            <div style={{ padding: 12, background: '#f9fafb', border: '1px solid #ddd', borderRadius: 4, marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Run window for next attach</div>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                Leave at the contract window for ads that run the whole term, or
+                narrow them to pre-program a future ad. You can change these between
+                clicks if you're queueing several ads with different start dates.
+              </div>
+              <div className="row" style={{ gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12 }}>Start date</label>
+                  <input type="date" value={pickerStart} onChange={(e) => setPickerStart(e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12 }}>End date</label>
+                  <input type="date" value={pickerEnd} onChange={(e) => setPickerEnd(e.target.value)} />
+                </div>
+                <button
+                  onClick={() => {
+                    setPickerStart(contract.start_date);
+                    setPickerEnd(contract.end_date ?? '');
+                  }}
+                  style={{ alignSelf: 'flex-end', fontSize: 12 }}
+                  title="Reset to the contract's full term"
+                >
+                  Use contract window
+                </button>
+              </div>
+            </div>
+
             <input
               type="text"
               placeholder="Filter by filename…"

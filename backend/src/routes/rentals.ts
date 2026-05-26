@@ -56,7 +56,8 @@ interface RentalRow {
 
 const listQuerySchema = z.object({
   status: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
+  deviceId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 
 router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
@@ -67,6 +68,10 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
   if (params.status) {
     where.push(`r.status = $${i++}`);
     values.push(params.status);
+  }
+  if (params.deviceId) {
+    where.push(`r.device_id = $${i++}`);
+    values.push(params.deviceId);
   }
   values.push(params.limit);
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -375,6 +380,70 @@ router.post('/:id/republish', authRequired, requireRole('super_admin'), async (r
     [req.params.id],
   );
   res.json(rows[0] ?? null);
+});
+
+// --- Re-schedule a rental (admin can pre-program / shift run window) ---
+//
+// Pure date/time update. Unlike approve, this doesn't change status,
+// send emails, or push to VNNOX -- it just edits the run window so
+// admin can pre-program ads ahead of time or slide them around. Use
+// the manual "Republish" button on Device Detail after editing if the
+// rental is already approved/active and you want the change reflected
+// on the screen immediately.
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
+const scheduleSchema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
+  endDate:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
+  startTime: z.string().regex(TIME_RE, 'expect HH:MM').optional(),
+  endTime:   z.string().regex(TIME_RE, 'expect HH:MM').optional(),
+}).refine(
+  (d) => d.startDate !== undefined || d.endDate !== undefined || d.startTime !== undefined || d.endTime !== undefined,
+  { message: 'provide at least one field' },
+);
+
+router.patch('/:id/schedule', authRequired, requireRole('super_admin'), async (req, res) => {
+  const data = scheduleSchema.parse(req.body);
+
+  // Pull current dates so we can recompute duration_days when start/end change.
+  const cur = await query<{ start_date: string | null; end_date: string | null }>(
+    `SELECT start_date, end_date FROM rentals WHERE id = $1`,
+    [req.params.id],
+  );
+  if (cur.rows.length === 0) {
+    res.status(404).json({ error: 'rental not found' });
+    return;
+  }
+  const newStart = data.startDate ?? cur.rows[0].start_date;
+  const newEnd   = data.endDate   ?? cur.rows[0].end_date;
+  if (newStart && newEnd && new Date(newEnd) < new Date(newStart)) {
+    res.status(400).json({ error: 'endDate must be on or after startDate' });
+    return;
+  }
+  const newDurationDays = newStart && newEnd
+    ? Math.max(1, Math.ceil(
+        (new Date(newEnd).getTime() - new Date(newStart).getTime()) / (1000 * 60 * 60 * 24),
+      ))
+    : null;
+
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+  if (data.startDate !== undefined) { sets.push(`start_date = $${i++}::date`); values.push(data.startDate); }
+  if (data.endDate !== undefined)   { sets.push(`end_date = $${i++}::date`);   values.push(data.endDate); }
+  if (data.startTime !== undefined) { sets.push(`start_time = $${i++}::time`); values.push(data.startTime); }
+  if (data.endTime !== undefined)   { sets.push(`end_time = $${i++}::time`);   values.push(data.endTime); }
+  if (newDurationDays !== null && (data.startDate !== undefined || data.endDate !== undefined)) {
+    sets.push(`duration_days = $${i++}`); values.push(newDurationDays);
+  }
+  sets.push(`updated_at = NOW()`);
+  values.push(req.params.id);
+
+  const { rows } = await query<RentalRow>(
+    `UPDATE rentals SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+    values,
+  );
+  res.json(rows[0]);
 });
 
 router.post('/:id/reject', authRequired, requireRole('super_admin'), async (req, res) => {

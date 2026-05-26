@@ -6,11 +6,12 @@ import {
   playlists as playlistsApi,
   clients as clientsApi,
   adContracts as adContractsApi,
+  rentals as rentalsApi,
   type AdContract,
   type ClientHit,
   type UnattachedRental,
 } from '../api/endpoints';
-import type { Device, DeviceStatus, Playlist } from '../types';
+import type { AdminRental, Device, DeviceStatus, Playlist } from '../types';
 
 interface BrightnessFormState {
   autoBrightnessEnabled: boolean;
@@ -153,6 +154,9 @@ export default function DeviceDetail() {
   const [contractsByClient, setContractsByClient] = useState<Record<number, ClientHit>>({});
   // "Add contract" modal --------------------------------------------------
   const [showAddContract, setShowAddContract] = useState(false);
+  // Ad schedule (every rental on this device, sorted chronologically).
+  const [schedule, setSchedule] = useState<AdminRental[]>([]);
+  const [contractById, setContractById] = useState<Record<string, AdContract>>({});
 
   useEffect(() => {
     if (!id) return;
@@ -173,7 +177,19 @@ export default function DeviceDetail() {
     playlistsApi.list().then(setOrgPlaylists).catch(() => undefined);
     // Ad contracts on this device.
     adContractsApi.list({ deviceId: id }).then(setContracts).catch(() => undefined);
+    // Every rental on this device for the schedule timeline. Pull a
+    // generous limit so we can show past + upcoming in one view.
+    rentalsApi.list({ deviceId: id, limit: 500 }).then(setSchedule).catch(() => undefined);
   }, [id]);
+
+  // Build a contract_id → AdContract lookup so the schedule rows can
+  // resolve the client_id (and from there, the company name) without an
+  // extra round-trip per rental.
+  useEffect(() => {
+    const map: Record<string, AdContract> = {};
+    for (const c of contracts) map[c.id] = c;
+    setContractById(map);
+  }, [contracts]);
 
   // Look up the owner client's display name whenever device.owner_client_id changes.
   useEffect(() => {
@@ -754,6 +770,108 @@ export default function DeviceDetail() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* --- Ad schedule (every rental on this device, by start date) --- */}
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Ad schedule</h3>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          All ads scheduled or running on this screen, ordered by start date.
+          Edit individual run windows from each ad's contract page.
+        </div>
+        {schedule.length === 0 ? (
+          <div className="muted" style={{ fontSize: 13 }}>
+            No ads scheduled. Use "Add ad contract" above to attribute existing ads.
+          </div>
+        ) : (
+          (() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const sorted = [...schedule].sort((a, b) => {
+              const ad = a.start_date ?? '9999';
+              const bd = b.start_date ?? '9999';
+              return ad < bd ? -1 : ad > bd ? 1 : 0;
+            });
+            return (
+              <table style={{ width: '100%', fontSize: 14 }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                    <th>Status</th>
+                    <th>Company</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Daypart</th>
+                    <th>Artwork</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((r) => {
+                    const contract = r.contract_id ? contractById[r.contract_id] : null;
+                    const client = contract ? contractsByClient[contract.client_id] : null;
+                    const company = client?.company || client?.name || (r.advertiser_business || r.advertiser_name);
+                    const isFuture = r.start_date != null && r.start_date > today;
+                    const isPast   = r.end_date != null && r.end_date < today;
+                    const dotColor = r.status === 'active' ? '#16a34a'
+                                   : isFuture                ? '#2563eb'
+                                   : isPast                  ? '#9ca3af'
+                                   :                            '#f59e0b';
+                    return (
+                      <tr key={r.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td>
+                          <span
+                            title={r.status}
+                            style={{
+                              display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                              background: dotColor, marginRight: 6,
+                            }}
+                          />
+                          <span className="muted" style={{ fontSize: 12 }}>{r.status}</span>
+                        </td>
+                        <td>
+                          {contract ? (
+                            <Link to={`/ad-contracts/${contract.id}`}>{company}</Link>
+                          ) : (
+                            <span>{company} <span className="muted" style={{ fontSize: 11 }}>(unattributed)</span></span>
+                          )}
+                        </td>
+                        <td>{r.start_date ?? <span className="muted">—</span>}</td>
+                        <td>{r.end_date   ?? <span className="muted">—</span>}</td>
+                        <td>{r.start_time?.slice(0, 5)}–{r.end_time?.slice(0, 5)}</td>
+                        <td>
+                          {r.artwork_url && r.artwork_mime?.startsWith('image/') ? (
+                            <img
+                              src={r.artwork_url}
+                              alt=""
+                              style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 4, border: '1px solid #ddd' }}
+                            />
+                          ) : r.artwork_url ? (
+                            <a href={r.artwork_url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>file</a>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                        <td>
+                          {contract && (
+                            <Link to={`/ad-contracts/${contract.id}`} style={{ fontSize: 13 }}>Edit →</Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            );
+          })()
+        )}
+        <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#16a34a' }} /> active
+          {' · '}
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#2563eb' }} /> upcoming
+          {' · '}
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} /> pending review/payment
+          {' · '}
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#9ca3af' }} /> past
+        </div>
       </div>
 
       {/* --- New-contract modal ----------------------------------------- */}

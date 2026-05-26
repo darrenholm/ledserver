@@ -415,6 +415,9 @@ const attachMediaSchema = z.object({
   mediaId: z.string().uuid(),
   /** Optional override for the advertiser display name. Defaults to the contract's client name. */
   advertiserName: z.string().max(120).optional(),
+  /** Optional run window override. Defaults to the contract's full term. Used to pre-program future ads. */
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
+  endDate:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expect YYYY-MM-DD').optional(),
 });
 
 router.post('/:id/attach-media', requireRole('super_admin', 'org_admin'), async (req, res) => {
@@ -454,12 +457,15 @@ router.post('/:id/attach-media', requireRole('super_admin', 'org_admin'), async 
     return;
   }
 
-  // Default the rental's run window to the contract's term. Perpetual
-  // contracts get a sentinel-far end_date so the expiry cron leaves it
-  // alone (NULL end_date wouldn't be queryable, but a far-future date
-  // also keeps queries simple).
-  const startDate = contract.start_date;
-  const endDate   = contract.end_date ?? '2099-12-31';
+  // Run window: caller-provided dates win, then contract term, then a
+  // sentinel-far end_date for perpetual contracts (NULL end_date can't
+  // participate in the expiry cron's range queries).
+  const startDate = data.startDate ?? contract.start_date;
+  const endDate   = data.endDate   ?? contract.end_date ?? '2099-12-31';
+  if (new Date(endDate) < new Date(startDate)) {
+    res.status(400).json({ error: 'endDate must be on or after startDate' });
+    return;
+  }
   const durationDays = Math.max(1, Math.ceil(
     (new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24),
   ));

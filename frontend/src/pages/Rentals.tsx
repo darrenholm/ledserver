@@ -23,7 +23,7 @@ export default function Rentals() {
 
   useEffect(() => {
     rentalsApi
-      .list(filter === 'all' ? undefined : filter)
+      .list(filter === 'all' ? {} : { status: filter })
       .then(setList)
       .catch((e) => setErr((e as Error).message));
   }, [filter]);

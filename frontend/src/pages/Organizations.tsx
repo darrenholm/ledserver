@@ -10,6 +10,10 @@ export default function Organizations() {
   // Inline create form.
   const [newOrgName, setNewOrgName] = useState('');
   const [creating, setCreating] = useState(false);
+  // Inline rename (one row at a time).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const refresh = () =>
     orgsApi
@@ -39,6 +43,30 @@ export default function Organizations() {
       refresh();
     } catch (e) {
       setErr((e as Error).message);
+    }
+  };
+
+  const startRename = (o: Organization) => {
+    setEditingId(o.id);
+    setEditName(o.name);
+  };
+
+  const saveRename = async (id: string) => {
+    const name = editName.trim();
+    if (name.length < 2) {
+      setErr('Name must be at least 2 characters.');
+      return;
+    }
+    setSavingEdit(true);
+    setErr(null);
+    try {
+      await orgsApi.update(id, { name });
+      setEditingId(null);
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -115,7 +143,22 @@ export default function Organizations() {
             </tr>
             {list.map((o) => (
               <tr key={o.id}>
-                <td>{o.name}</td>
+                <td>
+                  {editingId === o.id ? (
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void saveRename(o.id);
+                        if (e.key === 'Escape') setEditingId(null);
+                      }}
+                      autoFocus
+                      style={{ width: '100%' }}
+                    />
+                  ) : (
+                    o.name
+                  )}
+                </td>
                 <td><code>{o.slug}</code></td>
                 <td className="muted">{new Date(o.created_at).toLocaleString()}</td>
                 <td>
@@ -126,7 +169,23 @@ export default function Organizations() {
                   )}
                 </td>
                 <td>
-                  <button className="danger" onClick={() => onDelete(o.id, o.name)}>Delete</button>
+                  <div className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                    {editingId === o.id ? (
+                      <>
+                        <button onClick={() => void saveRename(o.id)} disabled={savingEdit}>
+                          {savingEdit ? 'Saving…' : 'Save'}
+                        </button>
+                        <button className="secondary" onClick={() => setEditingId(null)} disabled={savingEdit}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="secondary" onClick={() => startRename(o)}>Rename</button>
+                        <button className="danger" onClick={() => onDelete(o.id, o.name)}>Delete</button>
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

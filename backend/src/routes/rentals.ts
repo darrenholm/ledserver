@@ -5,6 +5,7 @@ import { config } from '../config';
 import { authRequired, requireRole } from '../middleware/auth';
 import { rentalApprovedEmail, rentalRejectedEmail, sendEmail } from '../services/email';
 import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
+import { mirrorRentalArtwork } from '../services/artworkMirror';
 import { lookupClientViaShopApi, setClientTrustViaShopApi } from '../services/shopApiClient';
 import { countSlotConflicts, sendNewRentalNotification } from './publicRentals';
 
@@ -384,6 +385,86 @@ router.post('/:id/republish', authRequired, requireRole('super_admin'), async (r
     [req.params.id],
   );
   res.json(rows[0] ?? null);
+});
+
+// --- Swap a rental's creative in-place (admin) ---
+//
+// The "weekly artwork change" workflow. Updating media_id on the same
+// rental row preserves the run window, client link, contract link, and
+// payment history — only the playing creative changes. After the swap
+// we republish to VNNOX (if the rental is in a publishable state) and
+// fire-and-forget the L:\ mirror.
+//
+// The media file must already exist in the same org's media library —
+// callers either upload to /api/media first or pick from the existing
+// library. This endpoint deliberately doesn't accept a file upload so
+// admins use Media's existing upload path (which handles dimensions,
+// thumbnails, validation).
+
+const replaceMediaSchema = z.object({ mediaId: z.string().uuid() });
+
+router.patch('/:id/media', authRequired, requireRole('super_admin'), async (req, res) => {
+  const { mediaId } = replaceMediaSchema.parse(req.body);
+
+  // Verify the rental exists and the media is in the same org.
+  const rentalRes = await query<{ device_id: string; status: string; organization_id: string }>(
+    `SELECT r.device_id, r.status, d.organization_id
+       FROM rentals r JOIN devices d ON d.id = r.device_id
+      WHERE r.id = $1`,
+    [req.params.id],
+  );
+  if (rentalRes.rows.length === 0) {
+    res.status(404).json({ error: 'rental not found' });
+    return;
+  }
+  const orgId = rentalRes.rows[0].organization_id;
+
+  const mediaRes = await query<{ id: string }>(
+    `SELECT id FROM media WHERE id = $1 AND organization_id = $2`,
+    [mediaId, orgId],
+  );
+  if (mediaRes.rows.length === 0) {
+    res.status(404).json({ error: 'media not found in this org' });
+    return;
+  }
+
+  await query(
+    `UPDATE rentals SET media_id = $1, updated_at = NOW() WHERE id = $2`,
+    [mediaId, req.params.id],
+  );
+
+  // Mirror the new artwork into the client's L:\ folder. Best-effort —
+  // never blocks the swap.
+  void mirrorRentalArtwork(req.params.id);
+
+  // Republish to VNNOX only if the rental is currently in a state that
+  // pushes to the device. Pending/cancelled rentals don't have a live
+  // program to update.
+  let publishErrorMsg: string | null = null;
+  if (rentalRes.rows[0].status === 'approved' || rentalRes.rows[0].status === 'active') {
+    try {
+      await publishApprovedAdToVnnox(req.params.id);
+    } catch (err) {
+      // Don't fail the swap if VNNOX is grumpy — admin can hit
+      // "Republish" later. The DB swap succeeded.
+      publishErrorMsg = (err as Error).message ?? String(err);
+      // eslint-disable-next-line no-console
+      console.warn('replace-media: vnnox publish failed for rental', req.params.id, publishErrorMsg);
+    }
+  }
+
+  // Return the freshly-updated rental row with hydrated joins.
+  const { rows } = await query<RentalRow>(
+    `SELECT r.*, d.name AS device_name, d.location AS device_location,
+            d.width_px AS device_width_px, d.height_px AS device_height_px,
+            m.storage_url AS artwork_url, m.mime_type AS artwork_mime
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN media m ON m.id = r.media_id
+      WHERE r.id = $1`,
+    [req.params.id],
+  );
+  res.json({ rental: rows[0] ?? null, publishError: publishErrorMsg });
 });
 
 // --- Re-schedule a rental (admin can pre-program / shift run window) ---

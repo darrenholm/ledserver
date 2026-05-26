@@ -171,6 +171,9 @@ export const rentals = {
   republish: (id: string) => api<AdminRental>(`/rentals/${id}/republish`, { body: {} }),
   reschedule: (id: string, args: { startDate?: string; endDate?: string; startTime?: string; endTime?: string }) =>
     api<AdminRental>(`/rentals/${id}/schedule`, { method: 'PATCH', body: args }),
+  /** In-place artwork swap. Updates the rental's media_id, republishes, mirrors to L:\. */
+  replaceMedia: (id: string, mediaId: string) =>
+    api<{ rental: AdminRental | null; publishError: string | null }>(`/rentals/${id}/media`, { method: 'PATCH', body: { mediaId } }),
   getClientTrust: (id: string) =>
     api<{ clientId: number | null; trust: boolean | null }>(`/rentals/${id}/client-trust`),
   setClientTrust: (id: string, trust: boolean) =>

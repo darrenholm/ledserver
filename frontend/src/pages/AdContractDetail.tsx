@@ -48,6 +48,13 @@ export default function AdContractDetail() {
   // Pre-program: dates applied to whatever gets attached next (defaults to contract window).
   const [pickerStart, setPickerStart] = useState('');
   const [pickerEnd, setPickerEnd] = useState('');
+  /**
+   * When set, the media picker is in "replace" mode for a specific rental
+   * — clicking a thumbnail swaps that rental's media_id instead of
+   * creating a new rental row. Cleared when the picker is opened in
+   * attribution mode via the "+ Add from media library" button.
+   */
+  const [replaceTargetRentalId, setReplaceTargetRentalId] = useState<string | null>(null);
   // Inline date edit on the rentals table.
   const [editingRental, setEditingRental] = useState<string | null>(null);
   const [editStart, setEditStart] = useState('');
@@ -133,6 +140,7 @@ export default function AdContractDetail() {
 
   const openMediaPicker = async () => {
     if (!contract) return;
+    setReplaceTargetRentalId(null); // explicit: this is attach mode
     setShowMediaPicker(true);
     setMediaSearch('');
     // Seed the picker dates with the contract window so the common case
@@ -148,22 +156,54 @@ export default function AdContractDetail() {
     }
   };
 
+  const openReplacePicker = async (rentalId: string) => {
+    if (!contract) return;
+    setReplaceTargetRentalId(rentalId);
+    setShowMediaPicker(true);
+    setMediaSearch('');
+    // Dates aren't used in replace mode but clear them so the panel
+    // collapses visually (and so they don't get sent if user toggles
+    // back to attach mode).
+    setPickerStart('');
+    setPickerEnd('');
+    try {
+      const list = await mediaApi.list();
+      setMediaLib(list);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
   const attachMedia = async (mediaId: string) => {
     if (!contract) return;
     setMediaBusy(mediaId);
     setErr(null);
     try {
-      await adContractsApi.attachMedia(contract.id, {
-        mediaId,
-        // Stamp the rental row with the company name (falling back to the
-        // contact name) so it reads correctly on pages that don't do the
-        // contract->client lookup.
-        advertiserName: client?.company || client?.name || undefined,
-        startDate: pickerStart || undefined,
-        endDate: pickerEnd || undefined,
-      });
+      if (replaceTargetRentalId) {
+        // In-place swap: same rental row, new media_id. Preserves dates,
+        // contract link, payment history; republishes to VNNOX.
+        const result = await rentalsApi.replaceMedia(replaceTargetRentalId, mediaId);
+        if (result.publishError) {
+          setErr(`Artwork swapped, but VNNOX publish failed: ${result.publishError}. Use Republish from the device page to retry.`);
+        }
+        // Close on success — replace is a one-shot action, no need to
+        // keep the picker open like attribution batching.
+        setShowMediaPicker(false);
+        setReplaceTargetRentalId(null);
+      } else {
+        // Attribution mode: create a fresh rental for the contract.
+        await adContractsApi.attachMedia(contract.id, {
+          mediaId,
+          // Stamp the rental row with the company name (falling back to the
+          // contact name) so it reads correctly on pages that don't do the
+          // contract->client lookup.
+          advertiserName: client?.company || client?.name || undefined,
+          startDate: pickerStart || undefined,
+          endDate: pickerEnd || undefined,
+        });
+        // Don't close — admin may want to add several files in a row.
+      }
       await refreshContract();
-      // Don't close the picker — admin may want to add several files in a row.
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -463,7 +503,15 @@ export default function AdContractDetail() {
                         <button onClick={() => setEditingRental(null)} disabled={busy} style={{ fontSize: 12, padding: '2px 8px' }}>Cancel</button>
                       </div>
                     ) : (
-                      <div className="row" style={{ gap: 4 }}>
+                      <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => openReplacePicker(r.id)}
+                          disabled={busy}
+                          style={{ fontSize: 12, padding: '2px 8px' }}
+                          title="Swap the playing creative in place. Dates and contract link stay the same."
+                        >
+                          Replace artwork
+                        </button>
                         <button
                           onClick={() => startEditRental(r)}
                           disabled={busy}
@@ -505,46 +553,61 @@ export default function AdContractDetail() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="row between" style={{ marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>Add ad from media library</h3>
-              <button onClick={() => setShowMediaPicker(false)}>✕</button>
+              <h3 style={{ margin: 0 }}>
+                {replaceTargetRentalId ? 'Replace artwork' : 'Add ad from media library'}
+              </h3>
+              <button onClick={() => { setShowMediaPicker(false); setReplaceTargetRentalId(null); }}>✕</button>
             </div>
             {err && <div className="error-banner" style={{ marginBottom: 8 }}>{err}</div>}
             <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-              Pick a file you've already uploaded to the media library — typical for
-              ads the screen owner provided directly. Each pick creates a rental row
-              linked to this contract and (best-effort) mirrors the file into the
-              client's <code>LED Ads</code> folder.
+              {replaceTargetRentalId ? (
+                <>
+                  Pick the new file. The rental's run window, contract link, and
+                  status stay the same — only the playing creative changes. We'll
+                  republish to VNNOX automatically (if the ad is currently live)
+                  and mirror the new file into the client's <code>LED Ads</code> folder.
+                </>
+              ) : (
+                <>
+                  Pick a file you've already uploaded to the media library — typical for
+                  ads the screen owner provided directly. Each pick creates a rental row
+                  linked to this contract and (best-effort) mirrors the file into the
+                  client's <code>LED Ads</code> folder.
+                </>
+              )}
             </div>
 
-            {/* Pre-program: the dates applied to whatever you attach next. */}
-            <div style={{ padding: 12, background: '#f9fafb', border: '1px solid #ddd', borderRadius: 4, marginBottom: 12 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Run window for next attach</div>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-                Leave at the contract window for ads that run the whole term, or
-                narrow them to pre-program a future ad. You can change these between
-                clicks if you're queueing several ads with different start dates.
-              </div>
-              <div className="row" style={{ gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 12 }}>Start date</label>
-                  <input type="date" value={pickerStart} onChange={(e) => setPickerStart(e.target.value)} />
+            {/* Pre-program: the dates applied to whatever you attach next. Hidden in replace mode. */}
+            {!replaceTargetRentalId && (
+              <div style={{ padding: 12, background: '#f9fafb', border: '1px solid #ddd', borderRadius: 4, marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Run window for next attach</div>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                  Leave at the contract window for ads that run the whole term, or
+                  narrow them to pre-program a future ad. You can change these between
+                  clicks if you're queueing several ads with different start dates.
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: 12 }}>End date</label>
-                  <input type="date" value={pickerEnd} onChange={(e) => setPickerEnd(e.target.value)} />
+                <div className="row" style={{ gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 12 }}>Start date</label>
+                    <input type="date" value={pickerStart} onChange={(e) => setPickerStart(e.target.value)} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: 12 }}>End date</label>
+                    <input type="date" value={pickerEnd} onChange={(e) => setPickerEnd(e.target.value)} />
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPickerStart(toDateInput(contract.start_date));
+                      setPickerEnd(toDateInput(contract.end_date));
+                    }}
+                    style={{ alignSelf: 'flex-end', fontSize: 12 }}
+                    title="Reset to the contract's full term"
+                  >
+                    Use contract window
+                  </button>
                 </div>
-                <button
-                  onClick={() => {
-                    setPickerStart(toDateInput(contract.start_date));
-                    setPickerEnd(toDateInput(contract.end_date));
-                  }}
-                  style={{ alignSelf: 'flex-end', fontSize: 12 }}
-                  title="Reset to the contract's full term"
-                >
-                  Use contract window
-                </button>
               </div>
-            </div>
+            )}
 
             <input
               type="text"

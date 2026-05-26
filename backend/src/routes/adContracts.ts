@@ -348,6 +348,41 @@ router.delete('/:id', requireRole('super_admin', 'org_admin'), async (req, res) 
   res.status(204).end();
 });
 
+// --- Re-send the activation email (admin) ---
+//
+// The auto-invite on contract create handles most cases, but staff sometimes
+// need to re-fire: the original email landed in spam, the client wasn't
+// captured on shop-api yet, or they're already-active but lost the link.
+// Idempotent in shop-api's soft sense — already-active accounts don't get
+// a new email; clients with no email on file report hasEmail=false.
+
+router.post('/:id/send-activation', requireRole('super_admin', 'org_admin'), async (req, res) => {
+  const { clause, params } = orgClause(req, 'd.organization_id', 2);
+  const { rows } = await query<{ client_id: number }>(
+    `SELECT c.client_id FROM ad_contracts c
+     JOIN devices d ON d.id = c.device_id
+     WHERE c.id = $1 ${clause}`,
+    [req.params.id, ...params],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'contract not found' });
+    return;
+  }
+  try {
+    const result = await sendCustomerActivationViaShopApi(rows[0].client_id);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof ShopApiError) {
+      res.status(err.status === 503 ? 503 : 502).json({
+        error: 'shop-api unreachable',
+        message: err.message,
+      });
+      return;
+    }
+    throw err;
+  }
+});
+
 // --- Contract attribution by media id (for the playlist editor) ---
 //
 // Given a list of media ids, returns every rental that references each

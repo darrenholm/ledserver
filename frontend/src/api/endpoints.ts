@@ -315,6 +315,9 @@ export const adContracts = {
     api<{ rentalId: string }>(`/ad-contracts/${contractId}/attach-media`, { body: args }),
   byMedia: (mediaIds: string[]) =>
     api<Record<string, MediaContractAttribution[]>>(`/ad-contracts/by-media`, { body: { mediaIds } }),
+  /** Re-send the customer activation email to this contract's client. */
+  sendActivation: (id: string) =>
+    api<{ sent: boolean; hasEmail: boolean; alreadyActive: boolean }>(`/ad-contracts/${id}/send-activation`, { body: {} }),
 };
 
 export interface MediaContractAttribution {

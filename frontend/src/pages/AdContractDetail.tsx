@@ -235,6 +235,31 @@ export default function AdContractDetail() {
     }
   };
 
+  const resendActivation = async () => {
+    if (!contract) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await adContractsApi.sendActivation(contract.id);
+      // Surface what happened so admin understands the result. shop-api
+      // returns soft-success even when no email was sent (already-active
+      // or no-email-on-file), so we can't just say "Sent!" blindly.
+      if (r.sent) {
+        alert('Activation email sent. Ask them to check their inbox (and spam).');
+      } else if (r.alreadyActive) {
+        alert('That client is already activated — they should use holmgraphics.ca/shop/login (Forgot password if they lost it), not the activation link.');
+      } else if (!r.hasEmail) {
+        alert('No email on file for this client in shop-api. Add an email to their client record and try again.');
+      } else {
+        alert('shop-api accepted the request but reported no email was sent. Check the shop-api logs.');
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const detach = async (rentalId: string) => {
     if (!contract) return;
     if (!confirm('Unlink this ad from the contract? The ad stays on the screen, but it won\'t be attributed to this client anymore.')) return;
@@ -285,6 +310,22 @@ export default function AdContractDetail() {
               {contract.device_name ?? contract.device_id.slice(0, 8)}
             </Link>
             {contract.device_location && ` · ${contract.device_location}`}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <button
+              className="secondary"
+              onClick={resendActivation}
+              disabled={busy}
+              style={{ fontSize: 12, padding: '2px 8px' }}
+              title="Re-send the customer activation email so the client can log in to /advertise/my-ads"
+            >
+              Send activation email
+            </button>
+            {client?.email && (
+              <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>
+                will go to {client.email}
+              </span>
+            )}
           </div>
         </div>
         <span

@@ -311,7 +311,19 @@ router.post('/rentals', async (req, res) => {
  * text-ad swap routes apply them identically.
  */
 async function authorizeArtworkChange(opts: {
-  rental: { id: string; status: string; project_client_id: number | null; advertiser_email: string };
+  rental: {
+    id: string;
+    status: string;
+    project_client_id: number | null;
+    advertiser_email: string;
+    /**
+     * For contract-attributed rentals (the new ownership/attribution path),
+     * this carries the client_id from the parent ad_contract. We accept a
+     * swap when the advertiser's id matches it — even when
+     * project_client_id is NULL.
+     */
+    contract_client_id: number | null;
+  };
   advertiser: { id: number; email: string } | undefined;
 }): Promise<
   | { kind: 'allow-booking' }                                 // pre-approval, no auth
@@ -330,15 +342,18 @@ async function authorizeArtworkChange(opts: {
   }
 
   // Approved/active swap path — require a logged-in advertiser whose identity
-  // matches the rental owner. Match by client_id first; legacy rentals with
-  // NULL project_client_id fall back to advertiser_email.
+  // matches the rental owner. Three accepted link paths:
+  //   1. rental.project_client_id  (paid /advertise bookings)
+  //   2. rental.contract.client_id (admin-attributed via contracts)
+  //   3. advertiser_email          (legacy rentals before the client-id link)
   if (!advertiser) {
     return { kind: 'deny', status: 401, reason: 'sign in to change a running ad' };
   }
-  const matchesId    = rental.project_client_id && rental.project_client_id === advertiser.id;
-  const matchesEmail = !rental.project_client_id &&
-                       rental.advertiser_email?.toLowerCase() === advertiser.email.toLowerCase();
-  if (!matchesId && !matchesEmail) {
+  const matchesProjectId  = rental.project_client_id  && rental.project_client_id  === advertiser.id;
+  const matchesContractId = rental.contract_client_id && rental.contract_client_id === advertiser.id;
+  const matchesEmail      = !rental.project_client_id && !rental.contract_client_id &&
+                            rental.advertiser_email?.toLowerCase() === advertiser.email.toLowerCase();
+  if (!matchesProjectId && !matchesContractId && !matchesEmail) {
     return { kind: 'deny', status: 403, reason: 'this rental belongs to a different account' };
   }
 
@@ -406,20 +421,25 @@ router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), a
   }
 
   // Look up rental + device + ownership for dimension targets and auth.
+  // The LEFT JOIN onto ad_contracts surfaces the contract's client_id so
+  // contract-attributed rentals can self-serve via the customer portal.
   const r = await query<{
     rental_id: string;
     device_id: string;
     status: string;
     project_client_id: number | null;
+    contract_client_id: number | null;
     advertiser_email: string;
     width_px: number | null;
     height_px: number | null;
     organization_id: string;
   }>(
     `SELECT r.id AS rental_id, r.device_id, r.status,
-            r.project_client_id, r.advertiser_email,
+            r.project_client_id, c.client_id AS contract_client_id, r.advertiser_email,
             d.width_px, d.height_px, d.organization_id
-       FROM rentals r JOIN devices d ON d.id = r.device_id
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN ad_contracts c ON c.id = r.contract_id
       WHERE r.id = $1`,
     [req.params.id],
   );
@@ -435,6 +455,7 @@ router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), a
       id: rental.rental_id,
       status: rental.status,
       project_client_id: rental.project_client_id,
+      contract_client_id: rental.contract_client_id,
       advertiser_email: rental.advertiser_email,
     },
     advertiser: req.advertiser,
@@ -584,15 +605,18 @@ router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) =>
     device_id: string;
     status: string;
     project_client_id: number | null;
+    contract_client_id: number | null;
     advertiser_email: string;
     width_px: number | null;
     height_px: number | null;
     organization_id: string;
   }>(
     `SELECT r.id AS rental_id, r.device_id, r.status,
-            r.project_client_id, r.advertiser_email,
+            r.project_client_id, c.client_id AS contract_client_id, r.advertiser_email,
             d.width_px, d.height_px, d.organization_id
-       FROM rentals r JOIN devices d ON d.id = r.device_id
+       FROM rentals r
+       JOIN devices d ON d.id = r.device_id
+       LEFT JOIN ad_contracts c ON c.id = r.contract_id
       WHERE r.id = $1`,
     [req.params.id],
   );
@@ -607,6 +631,7 @@ router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) =>
       id: rental.rental_id,
       status: rental.status,
       project_client_id: rental.project_client_id,
+      contract_client_id: rental.contract_client_id,
       advertiser_email: rental.advertiser_email,
     },
     advertiser: req.advertiser,
@@ -875,7 +900,12 @@ router.get('/my-rentals', requireAdvertiser, async (req, res) => {
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
        LEFT JOIN media m ON m.id = r.media_id
+       -- Surface contract-attributed rentals too: the join lets us match
+       -- by the contract's client_id alongside the legacy project_client_id
+       -- linkage from paid /advertise bookings.
+       LEFT JOIN ad_contracts c ON c.id = r.contract_id
       WHERE r.project_client_id = $1
+         OR c.client_id          = $1
       ORDER BY COALESCE(r.start_date, r.created_at::date) DESC`,
     [adv.id],
   );

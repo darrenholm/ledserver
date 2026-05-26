@@ -330,6 +330,36 @@ export async function createRentalInvoiceViaShopApi(
   return body as CreateRentalInvoiceResult;
 }
 
+// ─── Customer activation invite ──────────────────────────────────────────────
+//
+// Triggers shop-api to send the client an activation email so they can
+// set a password and log into /advertise/my-ads. Best-effort: any failure
+// is logged and swallowed by the caller — the contract still gets created.
+
+export async function sendCustomerActivationViaShopApi(
+  clientId: number,
+  returnPath = '/advertise/my-ads',
+): Promise<{ sent: boolean; hasEmail: boolean; alreadyActive: boolean }> {
+  if (!config.shopApi.bridgeSecret) {
+    throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');
+  }
+  const res = await fetch(endpoint('/api/internal/send-customer-activation'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.shopApi.bridgeSecret,
+    },
+    body: JSON.stringify({ clientId, returnPath }),
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : undefined;
+  if (!res.ok) {
+    const msg = (body as { error?: string })?.error ?? `shop-api send-customer-activation failed (${res.status})`;
+    throw new ShopApiError(res.status, msg, body);
+  }
+  return body as { sent: boolean; hasEmail: boolean; alreadyActive: boolean };
+}
+
 export async function setClientTrustViaShopApi(clientId: number, trust: boolean): Promise<{ id: number; trust_self_serve_ads: boolean }> {
   if (!config.shopApi.bridgeSecret) {
     throw new ShopApiError(503, 'LED_SHOP_BRIDGE_SECRET not configured');

@@ -4,6 +4,7 @@ import { query } from '../db';
 import { authRequired, requireRole } from '../middleware/auth';
 import { orgClause } from '../services/scope';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
+import { sendCustomerActivationViaShopApi, ShopApiError } from '../services/shopApiClient';
 
 /**
  * Admin CRUD for ad_contracts.
@@ -210,6 +211,30 @@ router.post('/', requireRole('super_admin', 'org_admin'), async (req, res) => {
     // best-effort mirrors. Fire-and-forget; errors swallowed by the service.
     for (const rid of data.attachRentalIds) void mirrorRentalArtwork(rid);
   }
+
+  // Auto-invite the client to the self-serve portal. Best-effort: a
+  // missing shop-api / no-email-on-file / already-active result doesn't
+  // change the success of contract creation. Owner_perpetual contracts
+  // get invited too — the screen owner is exactly who should be able to
+  // log in and update their content.
+  void (async () => {
+    try {
+      const result = await sendCustomerActivationViaShopApi(data.clientId);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[ad-contracts] activation invite for client ${data.clientId}: ` +
+        `sent=${result.sent} hasEmail=${result.hasEmail} alreadyActive=${result.alreadyActive}`,
+      );
+    } catch (err) {
+      if (err instanceof ShopApiError) {
+        // eslint-disable-next-line no-console
+        console.warn(`[ad-contracts] activation invite skipped (shop-api ${err.status}): ${err.message}`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error('[ad-contracts] activation invite failed:', err);
+      }
+    }
+  })();
 
   res.status(201).json(contract);
 });

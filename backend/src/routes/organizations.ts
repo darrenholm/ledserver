@@ -6,6 +6,17 @@ import { authRequired, requireRole } from '../middleware/auth';
 const router = Router();
 router.use(authRequired);
 
+// Local slugify — same shape as auth.ts's, kept inline to avoid pulling in
+// the whole signup module. Hyphenate, lowercase, alpha-numeric only, capped
+// at 60 chars so it stays URL-friendly.
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
 interface OrgRow {
   id: string;
   name: string;
@@ -49,6 +60,29 @@ router.get('/me', async (req, res) => {
 });
 
 // --- super_admin-only management ---
+
+const createSchema = z.object({
+  name: z.string().min(2).max(120),
+});
+
+router.post('/', requireRole('super_admin'), async (req, res) => {
+  const data = createSchema.parse(req.body);
+
+  // Resolve a unique slug; same pattern as the signup flow uses.
+  const slugBase = slugify(data.name) || 'org';
+  let slug = slugBase;
+  for (let suffix = 2; suffix < 1000; suffix++) {
+    const taken = await query(`SELECT 1 FROM organizations WHERE slug = $1`, [slug]);
+    if (taken.rows.length === 0) break;
+    slug = `${slugBase}-${suffix}`;
+  }
+
+  const { rows } = await query<OrgRow>(
+    `INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING *`,
+    [data.name, slug],
+  );
+  res.status(201).json(rows[0]);
+});
 
 const updateSchema = z.object({
   name: z.string().min(2).max(120).optional(),

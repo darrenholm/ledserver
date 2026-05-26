@@ -59,6 +59,7 @@ export const users = {
 export const organizations = {
   list: () => api<Organization[]>('/organizations'),
   me: () => api<Organization>('/organizations/me'),
+  create: (name: string) => api<Organization>('/organizations', { body: { name } }),
   update: (id: string, data: { name?: string }) =>
     api<Organization>(`/organizations/${id}`, { method: 'PATCH', body: data }),
   remove: (id: string) => api<void>(`/organizations/${id}`, { method: 'DELETE' }),

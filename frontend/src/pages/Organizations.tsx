@@ -7,6 +7,9 @@ export default function Organizations() {
   const [list, setList] = useState<Organization[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [scope, setScope] = useState<string | null>(getOrgScope());
+  // Inline create form.
+  const [newOrgName, setNewOrgName] = useState('');
+  const [creating, setCreating] = useState(false);
 
   const refresh = () =>
     orgsApi
@@ -39,6 +42,25 @@ export default function Organizations() {
     }
   };
 
+  const onCreate = async () => {
+    const name = newOrgName.trim();
+    if (name.length < 2) {
+      setErr('Organization name must be at least 2 characters.');
+      return;
+    }
+    setCreating(true);
+    setErr(null);
+    try {
+      await orgsApi.create(name);
+      setNewOrgName('');
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="stack">
       <h1 style={{ margin: 0 }}>Organizations</h1>
@@ -47,6 +69,26 @@ export default function Organizations() {
       </div>
 
       {err && <div className="error-banner">{err}</div>}
+
+      <div className="card">
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Create organization</h3>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          Each organization gets its own media library, devices, and playlists. Use this for an
+          umbrella client like a school board where you want their schools to share a media pool.
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            placeholder="e.g. Upper Grand District School Board"
+            value={newOrgName}
+            onChange={(e) => setNewOrgName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void onCreate(); }}
+            style={{ flex: 1 }}
+          />
+          <button onClick={onCreate} disabled={creating || newOrgName.trim().length < 2}>
+            {creating ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </div>
 
       <div className="card" style={{ padding: 0 }}>
         <table>

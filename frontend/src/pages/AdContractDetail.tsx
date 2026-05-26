@@ -3,6 +3,15 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { adContracts as adContractsApi, media as mediaApi, clients as clientsApi, rentals as rentalsApi, type AdContract, type ClientFull, type UnattachedRental } from '../api/endpoints';
 import type { Media } from '../types';
 
+// Postgres DATE columns come back as ISO timestamps via pg-node
+// (e.g. "2026-03-01T00:00:00.000Z"). <input type="date"> and the
+// backend's YYYY-MM-DD regex both require the bare date part. This
+// helper normalizes everywhere we hand a date to an input or to the
+// API.
+function toDateInput(s: string | null | undefined): string {
+  return s ? s.slice(0, 10) : '';
+}
+
 /**
  * Admin detail page for a single ad contract. Shows:
  *   - Header: client + device + status pill
@@ -50,7 +59,7 @@ export default function AdContractDetail() {
       .get(id)
       .then((c) => {
         setContract(c);
-        setEndDate(c.end_date ?? '');
+        setEndDate(toDateInput(c.end_date));
         setAmountDollars(c.amount_cents != null ? (c.amount_cents / 100).toFixed(2) : '');
         setAutoRenew(c.auto_renew);
         setBillingEmail(c.billing_contact_email ?? '');
@@ -129,8 +138,8 @@ export default function AdContractDetail() {
     // Seed the picker dates with the contract window so the common case
     // (ad runs the whole contract) is one click. Admin can change them
     // for pre-programmed ads with a narrower window.
-    setPickerStart(contract.start_date);
-    setPickerEnd(contract.end_date ?? '');
+    setPickerStart(toDateInput(contract.start_date));
+    setPickerEnd(toDateInput(contract.end_date));
     try {
       const list = await mediaApi.list();
       setMediaLib(list);
@@ -164,8 +173,8 @@ export default function AdContractDetail() {
 
   const startEditRental = (r: { id: string; start_date: string | null; end_date: string | null }) => {
     setEditingRental(r.id);
-    setEditStart(r.start_date ?? '');
-    setEditEnd(r.end_date ?? '');
+    setEditStart(toDateInput(r.start_date));
+    setEditEnd(toDateInput(r.end_date));
   };
 
   const saveRentalDates = async () => {
@@ -268,7 +277,7 @@ export default function AdContractDetail() {
         <div className="row" style={{ gap: 12 }}>
           <div style={{ flex: 1 }}>
             <label>Start date</label>
-            <input value={contract.start_date} disabled />
+            <input value={toDateInput(contract.start_date)} disabled />
           </div>
           <div style={{ flex: 1 }}>
             <label>End date</label>
@@ -429,7 +438,7 @@ export default function AdContractDetail() {
                         />
                       </div>
                     ) : r.start_date && r.end_date ? (
-                      `${r.start_date} → ${r.end_date}`
+                      `${toDateInput(r.start_date)} → ${toDateInput(r.end_date)}`
                     ) : (
                       <span className="muted">unscheduled</span>
                     )}
@@ -499,6 +508,7 @@ export default function AdContractDetail() {
               <h3 style={{ margin: 0 }}>Add ad from media library</h3>
               <button onClick={() => setShowMediaPicker(false)}>✕</button>
             </div>
+            {err && <div className="error-banner" style={{ marginBottom: 8 }}>{err}</div>}
             <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
               Pick a file you've already uploaded to the media library — typical for
               ads the screen owner provided directly. Each pick creates a rental row
@@ -525,8 +535,8 @@ export default function AdContractDetail() {
                 </div>
                 <button
                   onClick={() => {
-                    setPickerStart(contract.start_date);
-                    setPickerEnd(contract.end_date ?? '');
+                    setPickerStart(toDateInput(contract.start_date));
+                    setPickerEnd(toDateInput(contract.end_date));
                   }}
                   style={{ alignSelf: 'flex-end', fontSize: 12 }}
                   title="Reset to the contract's full term"
@@ -622,6 +632,7 @@ export default function AdContractDetail() {
               <h3 style={{ margin: 0 }}>Attach existing ad</h3>
               <button onClick={() => setShowAttach(false)}>✕</button>
             </div>
+            {err && <div className="error-banner" style={{ marginBottom: 8 }}>{err}</div>}
             <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
               Ads on this screen that aren't yet attributed to any contract. Click "Attach" to link an ad to this contract.
             </div>
@@ -649,7 +660,7 @@ export default function AdContractDetail() {
                       <div style={{ flex: 1, fontSize: 13 }}>
                         <div><strong>{r.advertiser_name}</strong> {r.advertiser_business && <span className="muted">({r.advertiser_business})</span>}</div>
                         <div className="muted" style={{ fontSize: 12 }}>
-                          {r.start_date && r.end_date ? `${r.start_date} → ${r.end_date}` : <em>unscheduled</em>}
+                          {r.start_date && r.end_date ? `${toDateInput(r.start_date)} → ${toDateInput(r.end_date)}` : <em>unscheduled</em>}
                           {' · '}{r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
                           {' · '}${(r.amount_cents / 100).toFixed(2)} {r.currency}
                           {' · '}<span style={{ fontStyle: 'italic' }}>{r.status}</span>

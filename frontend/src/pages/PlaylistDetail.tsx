@@ -320,7 +320,7 @@ export default function PlaylistDetail() {
                                     : a.advertiser_name;
                                 const dates =
                                   a.start_date && a.end_date
-                                    ? `${a.start_date} → ${a.end_date}`
+                                    ? `${a.start_date.slice(0, 10)} → ${a.end_date.slice(0, 10)}`
                                     : 'unscheduled';
                                 const dotColor =
                                   a.rental_status === 'active' ? '#16a34a'

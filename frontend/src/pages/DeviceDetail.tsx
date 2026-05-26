@@ -278,6 +278,10 @@ export default function DeviceDetail() {
     return c.company || c.name || `Client #${id}`;
   };
 
+  // pg-node hands DATE columns back as ISO timestamps; cut to YYYY-MM-DD
+  // for display and date-input round-tripping.
+  const toDate = (s: string | null | undefined): string => (s ? s.slice(0, 10) : '');
+
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
@@ -748,7 +752,7 @@ export default function DeviceDetail() {
                   <td>
                     {c.contract_type === 'owner_perpetual'
                       ? <span className="muted">perpetual</span>
-                      : `${c.start_date} → ${c.end_date ?? '?'}`}
+                      : `${toDate(c.start_date)} → ${toDate(c.end_date) || '?'}`}
                   </td>
                   <td>
                     <span style={{
@@ -809,8 +813,8 @@ export default function DeviceDetail() {
                     const contract = r.contract_id ? contractById[r.contract_id] : null;
                     const client = contract ? contractsByClient[contract.client_id] : null;
                     const company = client?.company || client?.name || (r.advertiser_business || r.advertiser_name);
-                    const isFuture = r.start_date != null && r.start_date > today;
-                    const isPast   = r.end_date != null && r.end_date < today;
+                    const isFuture = r.start_date != null && toDate(r.start_date) > today;
+                    const isPast   = r.end_date != null && toDate(r.end_date) < today;
                     const dotColor = r.status === 'active' ? '#16a34a'
                                    : isFuture                ? '#2563eb'
                                    : isPast                  ? '#9ca3af'
@@ -834,8 +838,8 @@ export default function DeviceDetail() {
                             <span>{company} <span className="muted" style={{ fontSize: 11 }}>(unattributed)</span></span>
                           )}
                         </td>
-                        <td>{r.start_date ?? <span className="muted">—</span>}</td>
-                        <td>{r.end_date   ?? <span className="muted">—</span>}</td>
+                        <td>{r.start_date ? toDate(r.start_date) : <span className="muted">—</span>}</td>
+                        <td>{r.end_date   ? toDate(r.end_date)   : <span className="muted">—</span>}</td>
                         <td>{r.start_time?.slice(0, 5)}–{r.end_time?.slice(0, 5)}</td>
                         <td>
                           {r.artwork_url && r.artwork_mime?.startsWith('image/') ? (

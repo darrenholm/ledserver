@@ -136,7 +136,7 @@ export default function AdContracts() {
                   <td style={{ padding: '6px 8px' }}>
                     {c.contract_type === 'owner_perpetual'
                       ? <span className="muted">perpetual</span>
-                      : `${c.start_date} → ${c.end_date ?? '?'}`}
+                      : `${(c.start_date ?? '').slice(0, 10)} → ${(c.end_date ?? '').slice(0, 10) || '?'}`}
                   </td>
                   <td style={{ padding: '6px 8px' }}>
                     {c.amount_cents != null

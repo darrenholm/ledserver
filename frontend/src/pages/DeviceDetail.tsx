@@ -253,6 +253,15 @@ export default function DeviceDetail() {
 
   if (!device || !bForm || !rForm || !dForm || !mForm || !sForm || !oForm) return <div>{err ? <div className="error-banner">{err}</div> : 'Loading…'}</div>;
 
+  // On the device page we want the company name front-and-centre rather
+  // than the contact's personal name, because the device-level relationship
+  // is with the business, not the individual contact. Falls back to the
+  // computed display name (fname+lname or email) when company is blank.
+  const clientLabel = (c: ClientHit | undefined, id: number): string => {
+    if (!c) return `Client #${id}`;
+    return c.company || c.name || `Client #${id}`;
+  };
+
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
@@ -607,9 +616,10 @@ export default function DeviceDetail() {
           <div className="row between" style={{ alignItems: 'center' }}>
             <div>
               <strong>
-                {contractsByClient[device.owner_client_id]?.name
-                  ?? ownerInfo?.name
-                  ?? `Client #${device.owner_client_id}`}
+                {clientLabel(
+                  contractsByClient[device.owner_client_id] ?? ownerInfo ?? undefined,
+                  device.owner_client_id,
+                )}
               </strong>
               <div className="muted" style={{ fontSize: 12 }}>
                 shop-api client id: {device.owner_client_id}
@@ -712,7 +722,7 @@ export default function DeviceDetail() {
               {contracts.map((c) => (
                 <tr key={c.id} style={{ borderBottom: '1px solid #eee' }}>
                   <td>
-                    {contractsByClient[c.client_id]?.name ?? `Client #${c.client_id}`}
+                    {clientLabel(contractsByClient[c.client_id], c.client_id)}
                   </td>
                   <td>
                     <span className="muted" style={{ fontSize: 12 }}>

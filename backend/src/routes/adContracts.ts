@@ -323,6 +323,61 @@ router.delete('/:id', requireRole('super_admin', 'org_admin'), async (req, res) 
   res.status(204).end();
 });
 
+// --- Contract attribution by media id (for the playlist editor) ---
+//
+// Given a list of media ids, returns every rental that references each
+// one along with its contract id + client id. The playlist editor uses
+// this to show "this file belongs to HDTV's contract running May-Nov"
+// next to each playlist item.
+//
+// One media id can map to multiple rentals if the same creative was
+// used in more than one booking (rare, but the model allows it).
+// Client *names* aren't denormalized here — caller hydrates via the
+// /api/clients/:id proxy.
+
+const byMediaSchema = z.object({
+  mediaIds: z.array(z.string().uuid()).min(1).max(500),
+});
+
+router.post('/by-media', requireRole('super_admin', 'org_admin'), async (req, res) => {
+  const { mediaIds } = byMediaSchema.parse(req.body);
+  const { clause, params } = orgClause(req, 'd.organization_id', 2);
+  const { rows } = await query<{
+    rental_id: string;
+    media_id: string;
+    rental_status: string;
+    start_date: string | null;
+    end_date: string | null;
+    advertiser_name: string;
+    contract_id: string | null;
+    client_id: number | null;
+    contract_type: string | null;
+    contract_status: string | null;
+  }>(
+    `SELECT r.id   AS rental_id,
+            r.media_id,
+            r.status AS rental_status,
+            r.start_date, r.end_date,
+            r.advertiser_name,
+            c.id     AS contract_id,
+            c.client_id,
+            c.contract_type,
+            c.status AS contract_status
+       FROM rentals r
+       LEFT JOIN ad_contracts c ON c.id = r.contract_id
+       JOIN devices d ON d.id = r.device_id
+      WHERE r.media_id = ANY($1::uuid[]) ${clause}
+      ORDER BY r.created_at DESC`,
+    [mediaIds, ...params],
+  );
+  const byMedia: Record<string, typeof rows> = {};
+  for (const row of rows) {
+    if (!byMedia[row.media_id]) byMedia[row.media_id] = [];
+    byMedia[row.media_id].push(row);
+  }
+  res.json(byMedia);
+});
+
 // --- Unattached rentals picker (for "attribute existing ads" UI) ---
 //
 // Returns every rental on a device that doesn't yet belong to a contract.

@@ -309,7 +309,22 @@ export const adContracts = {
     api<UnattachedRental[]>(`/ad-contracts/unattached-rentals/${deviceId}`),
   attachMedia: (contractId: string, args: { mediaId: string; advertiserName?: string; startDate?: string; endDate?: string }) =>
     api<{ rentalId: string }>(`/ad-contracts/${contractId}/attach-media`, { body: args }),
+  byMedia: (mediaIds: string[]) =>
+    api<Record<string, MediaContractAttribution[]>>(`/ad-contracts/by-media`, { body: { mediaIds } }),
 };
+
+export interface MediaContractAttribution {
+  rental_id: string;
+  media_id: string;
+  rental_status: string;
+  start_date: string | null;
+  end_date: string | null;
+  advertiser_name: string;
+  contract_id: string | null;
+  client_id: number | null;
+  contract_type: 'rental' | 'owner_perpetual' | null;
+  contract_status: 'active' | 'expired' | 'cancelled' | null;
+}
 
 export const logs = {
   list: (params: { deviceId?: string; level?: string; limit?: number } = {}) => {

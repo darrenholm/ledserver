@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { devices as devicesApi, media as mediaApi, playlists as playlistsApi } from '../api/endpoints';
+import {
+  devices as devicesApi,
+  media as mediaApi,
+  playlists as playlistsApi,
+  adContracts as adContractsApi,
+  clients as clientsApi,
+  type MediaContractAttribution,
+} from '../api/endpoints';
 import { Thumbnail } from '../components/Thumbnail';
 import type { Device, Media, Playlist, PlaylistItem } from '../types';
 
@@ -37,6 +44,12 @@ export default function PlaylistDetail() {
   const [deployDeviceId, setDeployDeviceId] = useState('');
   const [deploying, setDeploying] = useState(false);
 
+  // Contract attribution per media id (which client owns this ad, when it runs).
+  // null entries indicate a fetch failure or no attribution — the row stays in
+  // the map so we don't re-fetch repeatedly.
+  const [attribution, setAttribution] = useState<Record<string, MediaContractAttribution[]>>({});
+  const [clientNames, setClientNames] = useState<Record<number, string>>({});
+
   useEffect(() => {
     if (!id) return;
     Promise.all([playlistsApi.get(id), mediaApi.list(), devicesApi.list()])
@@ -50,6 +63,61 @@ export default function PlaylistDetail() {
       })
       .catch((e) => setErr((e as Error).message));
   }, [id]);
+
+  // Fetch contract attribution for every item in this playlist. Items that
+  // aren't tied to any rental simply have no entry in the response, which
+  // renders as the muted "no contract" placeholder.
+  useEffect(() => {
+    if (items.length === 0) {
+      setAttribution({});
+      return;
+    }
+    const mediaIds = Array.from(new Set(items.map((it) => it.mediaId)));
+    let cancelled = false;
+    adContractsApi
+      .byMedia(mediaIds)
+      .then((res) => {
+        if (cancelled) return;
+        // Backfill empty arrays for mediaIds with no rentals so the UI
+        // distinguishes "loaded, no contract" from "still loading".
+        const filled: Record<string, MediaContractAttribution[]> = {};
+        for (const mid of mediaIds) filled[mid] = res[mid] ?? [];
+        setAttribution(filled);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [items]);
+
+  // Hydrate company names for every distinct client_id we found.
+  useEffect(() => {
+    const ids: number[] = [];
+    for (const arr of Object.values(attribution)) {
+      for (const a of arr) {
+        if (a.client_id != null && clientNames[a.client_id] === undefined && !ids.includes(a.client_id)) {
+          ids.push(a.client_id);
+        }
+      }
+    }
+    if (ids.length === 0) return;
+    let cancelled = false;
+    Promise.allSettled(ids.map((cid) => clientsApi.get(cid))).then((results) => {
+      if (cancelled) return;
+      setClientNames((prev) => {
+        const next = { ...prev };
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const cid = ids[i];
+          if (r.status === 'fulfilled') {
+            next[cid] = r.value.company || r.value.name;
+          } else {
+            next[cid] = `Client #${cid}`;
+          }
+        }
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [attribution, clientNames]);
 
   const mediaById = useMemo(() => {
     const m = new Map<string, Media>();
@@ -230,8 +298,49 @@ export default function PlaylistDetail() {
                     <td>
                       {m ? (
                         <>
-                          {m.original_name}{' '}
-                          <span className="muted" style={{ fontSize: 12 }}>({m.mime_type})</span>
+                          <div>
+                            {m.original_name}{' '}
+                            <span className="muted" style={{ fontSize: 12 }}>({m.mime_type})</span>
+                          </div>
+                          {/*
+                            * Contract attribution. attribution[mediaId] === undefined
+                            * means we're still loading; an empty array means we've
+                            * looked and the file isn't tied to any rental.
+                            */}
+                          {attribution[it.mediaId] === undefined ? (
+                            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>…</div>
+                          ) : attribution[it.mediaId].length === 0 ? (
+                            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>no contract</div>
+                          ) : (
+                            <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {attribution[it.mediaId].map((a) => {
+                                const company =
+                                  a.client_id != null && clientNames[a.client_id]
+                                    ? clientNames[a.client_id]
+                                    : a.advertiser_name;
+                                const dates =
+                                  a.start_date && a.end_date
+                                    ? `${a.start_date} → ${a.end_date}`
+                                    : 'unscheduled';
+                                const dotColor =
+                                  a.rental_status === 'active' ? '#16a34a'
+                                  : a.rental_status === 'approved' ? '#2563eb'
+                                  : a.rental_status === 'expired' || a.rental_status === 'cancelled' ? '#9ca3af'
+                                  : '#f59e0b';
+                                return (
+                                  <div key={a.rental_id} style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: dotColor }} />
+                                    {a.contract_id ? (
+                                      <Link to={`/ad-contracts/${a.contract_id}`}><strong>{company}</strong></Link>
+                                    ) : (
+                                      <strong>{company}</strong>
+                                    )}
+                                    <span className="muted">· {dates} · {a.rental_status}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </>
                       ) : (
                         <span className="muted">(media deleted)</span>

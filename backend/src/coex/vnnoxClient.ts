@@ -208,21 +208,15 @@ export class VnnoxCloudClient implements CoexTransport {
       // ignore — screen-list is not available on every tier
     }
 
-    // Per-device detail call. The resolutionRatio field is consistently
-    // documented and works on tiers where the broad screen list is empty.
+    // Per-device detail call. Documented at api-188113043 to return
+    // basic.resolutionRatio in "WIDTH*HEIGHT" format. In practice on
+    // Holm Graphics's VNNOX key this either errors silently (auth/scope)
+    // or returns an unexpected shape, so the call stays best-effort and
+    // admin can always type dimensions manually on DeviceDetail.
     try {
       const detail = await this.request<{ basic?: { resolutionRatio?: string } }>(
         'GET',
         `/v2/device-status-monitor/master-control/running/${encodeURIComponent(this.sn)}`,
-      );
-      // Temporary diagnostic — log what the endpoint actually returned so we
-      // can see if basic.resolutionRatio is present, absent, or under a
-      // different name. Dial back once auto-pull confirmed.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[vnnox-debug] master-control/running for sn=${this.sn}: ` +
-        `topKeys=${JSON.stringify(Object.keys(detail ?? {}))} ` +
-        `basic=${JSON.stringify(detail?.basic ?? null)}`,
       );
       const ratio = detail.basic?.resolutionRatio;
       if (typeof ratio === 'string') {
@@ -232,11 +226,8 @@ export class VnnoxCloudClient implements CoexTransport {
           heightPx = parseInt(m[2], 10);
         }
       }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[vnnox-debug] master-control/running for sn=${this.sn} threw: ${(err as Error).message}`,
-      );
+    } catch {
+      // ignore — manual entry on DeviceDetail is the fallback
     }
 
     try {

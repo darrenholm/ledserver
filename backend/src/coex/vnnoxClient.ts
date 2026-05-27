@@ -183,38 +183,27 @@ export class VnnoxCloudClient implements CoexTransport {
     let brightness = 0;
     let widthPx: number | undefined;
     let heightPx: number | undefined;
-    // Try a few screen-list variants because the unfiltered GET returns 0
-    // items for our API-key scope. Sequence:
-    //   1) POST { playerSns: [sn] } — matches the SN-filtered pattern the
-    //      player APIs use.
-    //   2) GET ?pageNumber=1&pageSize=1000 — in case VNNOX is 1-indexed.
-    //   3) GET ?pageNumber=0&pageSize=1000 — the original, kept as last try.
-    // First variant that finds our screen wins.
+    // Empirically: on Holm Graphics's VNNOX tier the screen-list endpoint
+    // doesn't return our screens regardless of method (GET unfiltered returns
+    // 0 items; POST { playerSns: [...] } returns status=100001 param error
+    // with no clue about the correct field). Without docs access I can't
+    // reliably guess the right shape, so auto-pull falls through to admin
+    // typing dimensions on the device page. Keeping the multi-attempt loop
+    // (silent) in case a future API change makes any of these start working.
     let hit: ScreenListItem | undefined;
-    const attempts: Array<{ label: string; run: () => Promise<{ items?: ScreenListItem[] }> }> = [
-      { label: 'POST{playerSns}', run: () => this.request('POST', '/v2/device-status-monitor/screen/list', { playerSns: [this.sn] }) },
-      { label: 'GET?page=1', run: () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=1&pageSize=1000') },
-      { label: 'GET?page=0', run: () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000') },
+    const attempts: Array<() => Promise<{ items?: ScreenListItem[] }>> = [
+      () => this.request('POST', '/v2/device-status-monitor/screen/list', { playerSns: [this.sn] }),
+      () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=1&pageSize=1000'),
+      () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000'),
     ];
-    for (const a of attempts) {
+    for (const run of attempts) {
       try {
-        const res = await a.run();
+        const res = await run();
         const items = res.items ?? [];
         const found = items.find((s) => s.sn === this.sn);
-        // Temporary diagnostic — log every attempt's outcome so we can see
-        // which variant actually returns the screen on this tier. Dial back
-        // once auto-pull is stable.
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[vnnox-debug] ${a.label} returned ${items.length} items; hit=${found ? 'FOUND' : 'no'}`,
-        );
-        if (found) {
-          hit = found;
-          break;
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`[vnnox-debug] ${a.label} threw: ${(err as Error).message}`);
+        if (found) { hit = found; break; }
+      } catch {
+        // ignore — try the next variant
       }
     }
     try {

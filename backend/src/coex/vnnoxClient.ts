@@ -189,15 +189,11 @@ export class VnnoxCloudClient implements CoexTransport {
         '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
       );
       const hit = screens.items?.find((s) => s.sn === this.sn);
-      // Loud diagnostic so we can see what's happening regardless of which
-      // branch is taken. Disable once auto-pull is stable.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[vnnox-debug] screen-list returned ${screens.items?.length ?? 0} items for sn=${this.sn}; ` +
-        `hit=${hit ? 'FOUND' : 'NOT_FOUND'}; ` +
-        `hitKeys=${hit ? JSON.stringify(Object.keys(hit)) : 'n/a'}; ` +
-        `hitRaw=${hit ? JSON.stringify(hit) : 'n/a'}`,
-      );
+      // Diagnostic confirmed: on Holm Graphics's VNNOX tier the screen-list
+      // call returns 0 items for the JD Hogarth SN (and likely others),
+      // even though the dashboard shows them clearly. Auto-pull only works
+      // when `hit` is found — fall back to admin typing dimensions on the
+      // device page. Diagnostic dialled back to silent; manual entry works.
       if (hit) {
         if (typeof hit.brightness === 'number') brightness = hit.brightness;
         // VNNOX's field names for screen geometry have varied across API
@@ -258,13 +254,8 @@ export class VnnoxCloudClient implements CoexTransport {
           );
         }
       }
-    } catch (err) {
-      // swallow — best-effort enrichment. Diagnostic so we can see when
-      // the screen-list call itself blows up (auth/network/etc).
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[vnnox-debug] screen-list call FAILED for sn=${this.sn}: ${(err as Error).message}`,
-      );
+    } catch {
+      // swallow — best-effort enrichment
     }
 
     return {

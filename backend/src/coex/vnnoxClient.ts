@@ -183,17 +183,41 @@ export class VnnoxCloudClient implements CoexTransport {
     let brightness = 0;
     let widthPx: number | undefined;
     let heightPx: number | undefined;
+    // Try a few screen-list variants because the unfiltered GET returns 0
+    // items for our API-key scope. Sequence:
+    //   1) POST { playerSns: [sn] } — matches the SN-filtered pattern the
+    //      player APIs use.
+    //   2) GET ?pageNumber=1&pageSize=1000 — in case VNNOX is 1-indexed.
+    //   3) GET ?pageNumber=0&pageSize=1000 — the original, kept as last try.
+    // First variant that finds our screen wins.
+    let hit: ScreenListItem | undefined;
+    const attempts: Array<{ label: string; run: () => Promise<{ items?: ScreenListItem[] }> }> = [
+      { label: 'POST{playerSns}', run: () => this.request('POST', '/v2/device-status-monitor/screen/list', { playerSns: [this.sn] }) },
+      { label: 'GET?page=1', run: () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=1&pageSize=1000') },
+      { label: 'GET?page=0', run: () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000') },
+    ];
+    for (const a of attempts) {
+      try {
+        const res = await a.run();
+        const items = res.items ?? [];
+        const found = items.find((s) => s.sn === this.sn);
+        // Temporary diagnostic — log every attempt's outcome so we can see
+        // which variant actually returns the screen on this tier. Dial back
+        // once auto-pull is stable.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[vnnox-debug] ${a.label} returned ${items.length} items; hit=${found ? 'FOUND' : 'no'}`,
+        );
+        if (found) {
+          hit = found;
+          break;
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[vnnox-debug] ${a.label} threw: ${(err as Error).message}`);
+      }
+    }
     try {
-      const screens = await this.request<{ items: ScreenListItem[] }>(
-        'GET',
-        '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
-      );
-      const hit = screens.items?.find((s) => s.sn === this.sn);
-      // Diagnostic confirmed: on Holm Graphics's VNNOX tier the screen-list
-      // call returns 0 items for the JD Hogarth SN (and likely others),
-      // even though the dashboard shows them clearly. Auto-pull only works
-      // when `hit` is found — fall back to admin typing dimensions on the
-      // device page. Diagnostic dialled back to silent; manual entry works.
       if (hit) {
         if (typeof hit.brightness === 'number') brightness = hit.brightness;
         // VNNOX's field names for screen geometry have varied across API

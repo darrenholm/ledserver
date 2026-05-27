@@ -214,11 +214,27 @@ export class VnnoxCloudClient implements CoexTransport {
         if (w && h) {
           widthPx = w;
           heightPx = h;
-        } else if (typeof hit.resolution === 'string') {
-          const m = hit.resolution.match(/(\d+)\s*[x×]\s*(\d+)/i);
-          if (m) {
-            widthPx = parseInt(m[1], 10);
-            heightPx = parseInt(m[2], 10);
+        } else {
+          // No structured fields — try every string field that might
+          // carry the resolution. VNNOX uses `*` as the separator
+          // ("240*120"), and other vendors use 'x' or '×', so the regex
+          // accepts all three.
+          const stringSources: unknown[] = [
+            raw.resolution,
+            raw.screenResolution,
+            raw.size,
+            raw.screenSize,
+            raw.pixels,
+          ];
+          for (const src of stringSources) {
+            if (typeof src === 'string') {
+              const m = src.match(/(\d+)\s*[x×*]\s*(\d+)/i);
+              if (m) {
+                widthPx = parseInt(m[1], 10);
+                heightPx = parseInt(m[2], 10);
+                break;
+              }
+            }
           }
         }
         if (!widthPx || !heightPx) {

@@ -106,7 +106,17 @@ export default function RentalDetail() {
           <div className="stack">
             <div><span className="muted">Name:</span> {rental.advertiser_name}</div>
             <div><span className="muted">Business:</span> {rental.advertiser_business ?? '—'}</div>
-            <div><span className="muted">Email:</span> <a href={`mailto:${rental.advertiser_email}`}>{rental.advertiser_email}</a></div>
+            <div>
+              <span className="muted">Email:</span>{' '}
+              {/* @led.local addresses are internal placeholders used when
+                  shop-api was unreachable at attach-media time and we still
+                  can't resolve a real email. Don't surface them as mailto. */}
+              {rental.advertiser_email && !/@led\.local$/i.test(rental.advertiser_email) ? (
+                <a href={`mailto:${rental.advertiser_email}`}>{rental.advertiser_email}</a>
+              ) : (
+                <span className="muted">— (no email on file)</span>
+              )}
+            </div>
             <div><span className="muted">Phone:</span> {rental.advertiser_phone ?? '—'}</div>
             {rental.advertiser_notes && (
               <div>

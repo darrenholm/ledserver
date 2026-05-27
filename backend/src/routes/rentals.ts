@@ -6,7 +6,14 @@ import { authRequired, requireRole } from '../middleware/auth';
 import { rentalApprovedEmail, rentalRejectedEmail, sendEmail } from '../services/email';
 import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
-import { lookupClientViaShopApi, setClientTrustViaShopApi } from '../services/shopApiClient';
+import { lookupClientViaShopApi, setClientTrustViaShopApi, ShopApiError } from '../services/shopApiClient';
+
+/**
+ * Pattern stamped on synthetic rentals when shop-api lookup fails at
+ * attach-media time. We re-resolve at read time so display always shows
+ * the real client email (or stays hidden if we still can't find one).
+ */
+const LED_LOCAL_EMAIL_RE = /@led\.local$/i;
 import { countSlotConflicts, sendNewRentalNotification } from './publicRentals';
 
 const router = Router();
@@ -100,13 +107,18 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
 });
 
 router.get('/:id', authRequired, requireRole('super_admin'), async (req, res) => {
-  const { rows } = await query<RentalRow>(
+  // JOIN ad_contracts so we have client_id available for the post-query
+  // shop-api lookup that resolves the real client email on synthetic
+  // rentals (the ones stamped with the @led.local placeholder).
+  const { rows } = await query<RentalRow & { contract_client_id: number | null }>(
     `SELECT r.*, d.name AS device_name, d.location AS device_location,
             d.width_px AS device_width_px, d.height_px AS device_height_px,
-            m.storage_url AS artwork_url, m.mime_type AS artwork_mime
+            m.storage_url AS artwork_url, m.mime_type AS artwork_mime,
+            c.client_id AS contract_client_id
        FROM rentals r
        JOIN devices d ON d.id = r.device_id
        LEFT JOIN media m ON m.id = r.media_id
+       LEFT JOIN ad_contracts c ON c.id = r.contract_id
       WHERE r.id = $1`,
     [req.params.id],
   );
@@ -114,7 +126,25 @@ router.get('/:id', authRequired, requireRole('super_admin'), async (req, res) =>
     res.status(404).json({ error: 'not found' });
     return;
   }
-  res.json(rows[0]);
+  const rental = rows[0];
+  // If the email is a synthetic placeholder, try to resolve the real one
+  // from shop-api. Best-effort: leave the placeholder in place if shop-api
+  // is unreachable. The frontend hides @led.local emails when displaying.
+  if (
+    rental.contract_client_id != null &&
+    LED_LOCAL_EMAIL_RE.test(rental.advertiser_email)
+  ) {
+    try {
+      const c = await lookupClientViaShopApi(rental.contract_client_id);
+      if (c.email && c.email.trim() && !LED_LOCAL_EMAIL_RE.test(c.email)) {
+        rental.advertiser_email = c.email;
+      }
+    } catch (err) {
+      // Stay with the placeholder if shop-api is grumpy.
+      if (!(err instanceof ShopApiError)) throw err;
+    }
+  }
+  res.json(rental);
 });
 
 // --- Mark paid (payment stub for Phase 1) ---

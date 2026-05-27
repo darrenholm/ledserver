@@ -30,6 +30,7 @@
     "resend": "^4.0.0",
     "sharp": "^0.33.5",
     "suncalc": "^1.9.0",
+    "undici": "^7.26.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

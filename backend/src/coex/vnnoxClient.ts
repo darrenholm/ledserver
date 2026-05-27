@@ -7,7 +7,7 @@ import {
   PlaylistManifest,
   PlaylistManifestItem,
 } from './types';
-import { signRequest, vnnoxBaseUrl } from './vnnoxSign';
+import { vnnoxBaseUrl, vnnoxFetch } from './vnnoxSign';
 
 type VnnoxMediaWidgetType = 'PICTURE' | 'GIF' | 'VIDEO';
 
@@ -89,14 +89,11 @@ export class VnnoxCloudClient implements CoexTransport {
   // ----- core request helper -----
 
   private async request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = { ...signRequest() };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
+      const res = await vnnoxFetch(`${this.baseUrl}${path}`, {
         method,
-        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });

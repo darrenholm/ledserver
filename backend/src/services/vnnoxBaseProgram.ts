@@ -10,7 +10,7 @@
  */
 import { query } from '../db';
 import { config } from '../config';
-import { signRequest, vnnoxBaseUrl } from '../coex/vnnoxSign';
+import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
 
 type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -46,9 +46,8 @@ async function resolvePlayerId(sn: string, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${vnnoxBaseUrl()}/v2/player/current/online-status`, {
+    const res = await vnnoxFetch(`${vnnoxBaseUrl()}/v2/player/current/online-status`, {
       method: 'POST',
-      headers: { ...signRequest(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerSns: [sn] }),
       signal: controller.signal,
     });
@@ -188,9 +187,8 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.vnnox.timeoutMs);
   try {
-    const res = await fetch(`${vnnoxBaseUrl()}/v2/player/program/normal`, {
+    const res = await vnnoxFetch(`${vnnoxBaseUrl()}/v2/player/program/normal`, {
       method: 'POST',
-      headers: { ...signRequest(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerIds: [playerId], pages }),
       signal: controller.signal,
     });

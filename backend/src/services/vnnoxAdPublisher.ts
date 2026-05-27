@@ -13,7 +13,7 @@
  */
 import crypto from 'crypto';
 import { config } from '../config';
-import { signRequest, vnnoxBaseUrl } from '../coex/vnnoxSign';
+import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
 
 export interface PublishAdArgs {
@@ -70,9 +70,8 @@ async function resolvePlayerId(sn: string, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${vnnoxBaseUrl()}/v2/player/current/online-status`, {
+    const res = await vnnoxFetch(`${vnnoxBaseUrl()}/v2/player/current/online-status`, {
       method: 'POST',
-      headers: { ...signRequest(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerSns: [sn] }),
       signal: controller.signal,
     });
@@ -154,9 +153,8 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${vnnoxBaseUrl()}/v2/player/program/insertion`, {
+      const res = await vnnoxFetch(`${vnnoxBaseUrl()}/v2/player/program/insertion`, {
         method: 'POST',
-        headers: { ...signRequest(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -240,9 +238,8 @@ export async function unpublishAd(sn: string, programId: string): Promise<void> 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${vnnoxBaseUrl()}/v2/player/program/insertion/delete`, {
+    const res = await vnnoxFetch(`${vnnoxBaseUrl()}/v2/player/program/insertion/delete`, {
       method: 'POST',
-      headers: { ...signRequest(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ playerIds: [playerId], programIds: [programId] }),
       signal: controller.signal,
     });

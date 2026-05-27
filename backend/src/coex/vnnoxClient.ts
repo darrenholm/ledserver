@@ -215,6 +215,15 @@ export class VnnoxCloudClient implements CoexTransport {
         'GET',
         `/v2/device-status-monitor/master-control/running/${encodeURIComponent(this.sn)}`,
       );
+      // Temporary diagnostic — log what the endpoint actually returned so we
+      // can see if basic.resolutionRatio is present, absent, or under a
+      // different name. Dial back once auto-pull confirmed.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[vnnox-debug] master-control/running for sn=${this.sn}: ` +
+        `topKeys=${JSON.stringify(Object.keys(detail ?? {}))} ` +
+        `basic=${JSON.stringify(detail?.basic ?? null)}`,
+      );
       const ratio = detail.basic?.resolutionRatio;
       if (typeof ratio === 'string') {
         const m = ratio.match(/(\d+)\s*[x×*]\s*(\d+)/i);
@@ -223,8 +232,11 @@ export class VnnoxCloudClient implements CoexTransport {
           heightPx = parseInt(m[2], 10);
         }
       }
-    } catch {
-      // ignore — fall back to manual entry on the device page
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[vnnox-debug] master-control/running for sn=${this.sn} threw: ${(err as Error).message}`,
+      );
     }
 
     try {

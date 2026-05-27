@@ -196,25 +196,37 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     return false;
   };
 
-  try {
-    return await attempt();
-  } catch (err) {
-    // Log the full error chain so we can see *why* VNNOX closed the socket.
-    // .message often loses the underlying cause; JSON-stringifying both
-    // surfaces .cause.code/.cause.message where it actually lives.
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[vnnox-publish] first attempt failed: ` +
-      `message=${(err as Error)?.message} ` +
-      `cause=${JSON.stringify((err as { cause?: unknown })?.cause ?? null)}`,
-    );
-    if (isTransient(err)) {
-      // eslint-disable-next-line no-console
-      console.warn('[vnnox-publish] transient — retrying once');
+  /**
+   * Try up to 4 times (initial + 3 retries) with exponential backoff. Real-
+   * world experience: NovaStar's edge (sometimes Cloudflare-fronted) drops
+   * sockets in bursts — a single retry isn't enough when the network is
+   * unhappy for a few seconds at a stretch. Backoff intervals were chosen
+   * empirically: 1s gets us past the most common micro-blip, 3s rides over
+   * Cloudflare's worst-cluster swaps, 7s catches the long-tail.
+   *
+   * Non-transient failures (4xx/5xx from VNNOX, validation errors) skip
+   * retry — those won't fix themselves.
+   */
+  const backoffMs = [1000, 3000, 7000];
+  let lastErr: unknown;
+  for (let i = 0; i <= backoffMs.length; i++) {
+    try {
       return await attempt();
+    } catch (err) {
+      lastErr = err;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[vnnox-publish] attempt ${i + 1}/${backoffMs.length + 1} failed: ` +
+        `message=${(err as Error)?.message} ` +
+        `cause=${JSON.stringify((err as { cause?: unknown })?.cause ?? null)}`,
+      );
+      if (!isTransient(err) || i === backoffMs.length) break;
+      // eslint-disable-next-line no-console
+      console.warn(`[vnnox-publish] transient — retrying in ${backoffMs[i]}ms`);
+      await new Promise((r) => setTimeout(r, backoffMs[i]));
     }
-    throw err;
   }
+  throw lastErr;
 }
 
 /**

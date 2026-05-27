@@ -146,33 +146,74 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     schedule,
   };
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${vnnoxBaseUrl()}/v2/player/program/insertion`, {
-      method: 'POST',
-      headers: { ...signRequest(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new CoexError(`vnnox insertion-publish failed (${res.status}): ${text}`, 'DEVICE_ERROR');
+  /**
+   * Attempt the insertion POST once. Pulled out into a helper so we can
+   * retry on transient socket terminations without duplicating the body.
+   */
+  const attempt = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${vnnoxBaseUrl()}/v2/player/program/insertion`, {
+        method: 'POST',
+        headers: { ...signRequest(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new CoexError(`vnnox insertion-publish failed (${res.status}): ${text}`, 'DEVICE_ERROR');
+      }
+      const data = text ? safeJson(text) : {};
+      const programId =
+        (data as any)?.programId ||
+        (data as any)?.id ||
+        (data as any)?.data?.programId ||
+        (data as any)?.data?.id ||
+        // Some VNNOX responses return { success: [{playerId, programId}], fail: [] }.
+        (Array.isArray((data as any)?.success) ? (data as any).success[0]?.programId : undefined) ||
+        // Last-resort: synthesize a local ID so we have SOMETHING to store.
+        // The cleanup path will try to call by-name if no ID was returned.
+        `local-${crypto.randomBytes(8).toString('hex')}`;
+      return { programId: String(programId), rawResponse: data };
+    } finally {
+      clearTimeout(timer);
     }
-    const data = text ? safeJson(text) : {};
-    const programId =
-      (data as any)?.programId ||
-      (data as any)?.id ||
-      (data as any)?.data?.programId ||
-      (data as any)?.data?.id ||
-      // Some VNNOX responses return { success: [{playerId, programId}], fail: [] }.
-      (Array.isArray((data as any)?.success) ? (data as any).success[0]?.programId : undefined) ||
-      // Last-resort: synthesize a local ID so we have SOMETHING to store.
-      // The cleanup path will try to call by-name if no ID was returned.
-      `local-${crypto.randomBytes(8).toString('hex')}`;
-    return { programId: String(programId), rawResponse: data };
-  } finally {
-    clearTimeout(timer);
+  };
+
+  /**
+   * Treat socket-level aborts as transient. VNNOX (or Cloudflare in between)
+   * occasionally closes the connection mid-response — Node undici surfaces
+   * that as Error: terminated. One automatic retry handles the common case
+   * without admin clicking Republish manually.
+   */
+  const isTransient = (err: unknown): boolean => {
+    const e = err as { name?: string; message?: string; cause?: { code?: string; message?: string } } | undefined;
+    if (!e) return false;
+    if (e.message === 'terminated' || e.message?.includes('terminated')) return true;
+    if (e.cause?.code === 'UND_ERR_SOCKET' || e.cause?.code === 'ECONNRESET') return true;
+    if (e.cause?.message === 'terminated' || e.cause?.message === 'other side closed') return true;
+    return false;
+  };
+
+  try {
+    return await attempt();
+  } catch (err) {
+    // Log the full error chain so we can see *why* VNNOX closed the socket.
+    // .message often loses the underlying cause; JSON-stringifying both
+    // surfaces .cause.code/.cause.message where it actually lives.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[vnnox-publish] first attempt failed: ` +
+      `message=${(err as Error)?.message} ` +
+      `cause=${JSON.stringify((err as { cause?: unknown })?.cause ?? null)}`,
+    );
+    if (isTransient(err)) {
+      // eslint-disable-next-line no-console
+      console.warn('[vnnox-publish] transient — retrying once');
+      return await attempt();
+    }
+    throw err;
   }
 }
 

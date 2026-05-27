@@ -134,6 +134,10 @@ export default function DeviceDetail() {
   const [device, setDevice] = useState<Device | null>(null);
   const [status, setStatus] = useState<DeviceStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Separate from err so "VNNOX didn't return resolution" doesn't get the
+  // red alarm treatment — it's an informational notice the admin should
+  // act on, not an outright error.
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [brightness, setBrightness] = useState(80);
   const [bForm, setBForm] = useState<BrightnessFormState | null>(null);
@@ -336,6 +340,18 @@ export default function DeviceDetail() {
       </div>
 
       {err && <div className="error-banner">{err}</div>}
+      {notice && (
+        <div style={{
+          background: '#fef3c7',
+          color: '#92400e',
+          border: '1px solid #fde68a',
+          borderRadius: 6,
+          padding: '8px 12px',
+          fontSize: 13,
+        }}>
+          {notice}
+        </div>
+      )}
 
       <div className="row" style={{ gap: 16, alignItems: 'stretch' }}>
         <div className="card" style={{ flex: 1 }}>
@@ -363,13 +379,14 @@ export default function DeviceDetail() {
                         setDevice(r.device);
                         setDForm(deviceToDetailsForm(r.device));
                         if (r.notice) {
-                          // Surface the soft notice as info, not an error.
-                          // err is the page-level banner state; we reuse it
-                          // for the message but the wording itself is
-                          // informational rather than an error.
-                          setErr(r.notice);
+                          // Informational: VNNOX didn't expose geometry.
+                          // Goes to the yellow notice banner, not the red
+                          // error banner. Clear any pre-existing real error.
+                          setNotice(r.notice);
+                          setErr(null);
                         } else if (r.pulled.widthPx && r.pulled.heightPx) {
                           setErr(null);
+                          setNotice(null);
                         }
                       })
                     }

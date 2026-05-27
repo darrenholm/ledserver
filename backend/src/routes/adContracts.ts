@@ -4,7 +4,7 @@ import { query } from '../db';
 import { authRequired, requireRole } from '../middleware/auth';
 import { orgClause } from '../services/scope';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
-import { sendCustomerActivationViaShopApi, ShopApiError } from '../services/shopApiClient';
+import { sendCustomerActivationViaShopApi, lookupClientViaShopApi, ShopApiError } from '../services/shopApiClient';
 
 /**
  * Admin CRUD for ad_contracts.
@@ -429,10 +429,14 @@ router.post('/by-media', requireRole('super_admin', 'org_admin'), async (req, re
       WHERE r.media_id = ANY($1::uuid[])
         -- Suppress orphaned synthetic rentals: rows the admin attached
         -- via attach-media and then detached. They're zombies that still
-        -- reference the media file but have no contract; without this
-        -- filter they'd duplicate the visible attribution rows.
+        -- reference the media file but have no contract. Identify them
+        -- by the synthetic-rental fingerprint (amount_cents=0 AND no
+        -- payment_provider) rather than by email — the old email-
+        -- sentinel approach exposed an internal-looking address in
+        -- admin UIs.
         AND (r.contract_id IS NOT NULL
-             OR r.advertiser_email <> 'attributed@holmgraphics.ca')
+             OR r.amount_cents > 0
+             OR r.payment_provider IS NOT NULL)
         ${clause}
       ORDER BY r.created_at DESC`,
     [mediaIds, ...params],
@@ -515,25 +519,25 @@ router.post('/:id/attach-rental', requireRole('super_admin', 'org_admin'), async
   res.json({ ok: true });
 });
 
-// Sentinel email stamped onto rental rows that are created via attach-media
-// (i.e. they're pure bookkeeping for contract attribution, not real /advertise
-// bookings with payment + customer info).
-const ATTRIBUTED_SENTINEL_EMAIL = 'attributed@holmgraphics.ca';
-
 router.post('/:id/detach-rental', requireRole('super_admin', 'org_admin'), async (req, res) => {
   const { rentalId } = attachSchema.parse(req.body);
   // Synthetic rentals (created by attach-media) have no independent value —
   // they're just an attribution row. Real /advertise bookings have payment
-  // history we must preserve. Discriminate on the sentinel email.
-  const { rows } = await query<{ advertiser_email: string }>(
-    `SELECT advertiser_email FROM rentals WHERE id = $1 AND contract_id = $2`,
+  // history we must preserve. Discriminate on the synthetic fingerprint:
+  // amount_cents = 0 AND payment_provider IS NULL. This replaces the older
+  // email-sentinel approach so we can stamp real client emails into the
+  // rental row instead.
+  const { rows } = await query<{ amount_cents: number; payment_provider: string | null }>(
+    `SELECT amount_cents, payment_provider FROM rentals WHERE id = $1 AND contract_id = $2`,
     [rentalId, req.params.id],
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'rental not attached to this contract' });
     return;
   }
-  if (rows[0].advertiser_email === ATTRIBUTED_SENTINEL_EMAIL) {
+  const r = rows[0];
+  const isSynthetic = r.amount_cents === 0 && !r.payment_provider;
+  if (isSynthetic) {
     await query(`DELETE FROM rentals WHERE id = $1`, [rentalId]);
   } else {
     await query(`UPDATE rentals SET contract_id = NULL, updated_at = NOW() WHERE id = $1`, [rentalId]);
@@ -612,12 +616,31 @@ router.post('/:id/attach-media', requireRole('super_admin', 'org_admin'), async 
     (new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24),
   ));
 
+  // Look up the contract's client to stamp the rental with a real
+  // advertiser email. Best-effort: if shop-api is unreachable or the
+  // client has no email, we leave the field as a marker email that's
+  // clearly internal (rather than the legacy sentinel which looked like
+  // a real Holm Graphics address).
+  let clientEmail = `client-${contract.client_id}@led.local`;
+  let clientName: string | undefined;
+  try {
+    const c = await lookupClientViaShopApi(contract.client_id);
+    if (c.email && c.email.trim()) clientEmail = c.email.trim();
+    clientName = c.company || c.name;
+  } catch {
+    // ignore — fall back to the placeholder email
+  }
+
   const advertiserName  = (data.advertiserName && data.advertiserName.trim())
+    || clientName
     || `Client #${contract.client_id}`;
 
   // Insert the rental row. Billing is at the contract level so amount_cents=0
-  // here. We also default the daypart to 24h so the ad isn't filtered out by
-  // time-of-day checks.
+  // and payment_provider IS NULL here — that pair is what distinguishes
+  // synthetic attribution rentals from real /advertise paid bookings (the
+  // old 'attributed@holmgraphics.ca' sentinel email is being phased out).
+  // Daypart defaults to 24h so the ad isn't filtered out by time-of-day
+  // checks.
   const { rows } = await query<{ id: string }>(
     `INSERT INTO rentals (
        device_id, contract_id, status,
@@ -638,7 +661,7 @@ router.post('/:id/attach-media', requireRole('super_admin', 'org_admin'), async 
      RETURNING id`,
     [
       contract.device_id, contract.id,
-      advertiserName, 'attributed@holmgraphics.ca',
+      advertiserName, clientEmail,
       startDate, endDate, durationDays,
       data.mediaId,
     ],

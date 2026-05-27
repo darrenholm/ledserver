@@ -77,7 +77,11 @@ router.get('/', authRequired, requireRole('super_admin'), async (req, res) => {
   // Hide orphaned synthetic rentals (attach-media → detach left behind).
   // They have no contract and no real payment history — they'd only clutter
   // the queue.
-  where.push(`(r.contract_id IS NOT NULL OR r.advertiser_email <> 'attributed@holmgraphics.ca')`);
+  // Hide orphaned synthetic rentals (attach-media → detach left behind).
+  // Synthetic fingerprint = amount_cents=0 AND no payment_provider; if a
+  // row also lost its contract link, it's a zombie and shouldn't appear
+  // in the admin queue.
+  where.push(`(r.contract_id IS NOT NULL OR r.amount_cents > 0 OR r.payment_provider IS NOT NULL)`);
   values.push(params.limit);
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const { rows } = await query<RentalRow>(

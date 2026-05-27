@@ -183,29 +183,50 @@ export class VnnoxCloudClient implements CoexTransport {
     let brightness = 0;
     let widthPx: number | undefined;
     let heightPx: number | undefined;
-    // Empirically: on Holm Graphics's VNNOX tier the screen-list endpoint
-    // doesn't return our screens regardless of method (GET unfiltered returns
-    // 0 items; POST { playerSns: [...] } returns status=100001 param error
-    // with no clue about the correct field). Without docs access I can't
-    // reliably guess the right shape, so auto-pull falls through to admin
-    // typing dimensions on the device page. Keeping the multi-attempt loop
-    // (silent) in case a future API change makes any of these start working.
+    // Two-step status enrichment per VNNOX docs:
+    //
+    //   1) screen-list (`/v2/device-status-monitor/screen/list`) returns
+    //      brightness + envBrightness + status across all screens visible
+    //      to the API key. On our tier this returns 0 items, so we tolerate
+    //      a miss here.
+    //
+    //   2) operating-parameters (`/v2/device-status-monitor/master-control/
+    //      running/{sn}`) returns the per-device detail including
+    //      basic.resolutionRatio ("1920*1080" format). This is per-SN and
+    //      works on tiers where the broad list doesn't.
+    //
+    // Both calls are best-effort; either or both may fail, and we still
+    // return a valid DeviceStatus.
     let hit: ScreenListItem | undefined;
-    const attempts: Array<() => Promise<{ items?: ScreenListItem[] }>> = [
-      () => this.request('POST', '/v2/device-status-monitor/screen/list', { playerSns: [this.sn] }),
-      () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=1&pageSize=1000'),
-      () => this.request('GET', '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000'),
-    ];
-    for (const run of attempts) {
-      try {
-        const res = await run();
-        const items = res.items ?? [];
-        const found = items.find((s) => s.sn === this.sn);
-        if (found) { hit = found; break; }
-      } catch {
-        // ignore — try the next variant
-      }
+    try {
+      const screens = await this.request<{ items: ScreenListItem[] }>(
+        'GET',
+        '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
+      );
+      hit = screens.items?.find((s) => s.sn === this.sn);
+    } catch {
+      // ignore — screen-list is not available on every tier
     }
+
+    // Per-device detail call. The resolutionRatio field is consistently
+    // documented and works on tiers where the broad screen list is empty.
+    try {
+      const detail = await this.request<{ basic?: { resolutionRatio?: string } }>(
+        'GET',
+        `/v2/device-status-monitor/master-control/running/${encodeURIComponent(this.sn)}`,
+      );
+      const ratio = detail.basic?.resolutionRatio;
+      if (typeof ratio === 'string') {
+        const m = ratio.match(/(\d+)\s*[x×*]\s*(\d+)/i);
+        if (m) {
+          widthPx = parseInt(m[1], 10);
+          heightPx = parseInt(m[2], 10);
+        }
+      }
+    } catch {
+      // ignore — fall back to manual entry on the device page
+    }
+
     try {
       if (hit) {
         if (typeof hit.brightness === 'number') brightness = hit.brightness;

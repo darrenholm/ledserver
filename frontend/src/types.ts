@@ -89,6 +89,18 @@ export interface Media {
   created_at: string;
 }
 
+/**
+ * Media row decorated with reference counts. Returned by /media/duplicates so
+ * the UI can disable delete on rows that are still in use (playlist_items has
+ * ON DELETE RESTRICT — server-side delete would 409).
+ */
+export interface MediaWithUsage extends Media {
+  usage: {
+    playlist_items: number;
+    rentals: number;
+  };
+}
+
 export interface PlaylistThumbnail {
   storage_url: string;
   thumbnail_url: string | null;

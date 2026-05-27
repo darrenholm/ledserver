@@ -115,6 +115,36 @@ router.get('/duplicates', async (req, res) => {
     params,
   );
 
+  // Per-media usage counts. playlist_items has ON DELETE RESTRICT so any non-
+  // zero count there will block a delete; rentals.media_id is SET NULL so
+  // we surface it as info but don't treat it as blocking.
+  const ids = rows.map((m) => m.id);
+  const usage = new Map<string, { playlist_items: number; rentals: number }>();
+  if (ids.length > 0) {
+    const playlistCounts = await query<{ media_id: string; n: string }>(
+      `SELECT media_id, COUNT(*)::text AS n FROM playlist_items WHERE media_id = ANY($1) GROUP BY media_id`,
+      [ids],
+    );
+    const rentalCounts = await query<{ media_id: string; n: string }>(
+      `SELECT media_id, COUNT(*)::text AS n FROM rentals WHERE media_id = ANY($1) GROUP BY media_id`,
+      [ids],
+    );
+    for (const r of playlistCounts.rows) {
+      const u = usage.get(r.media_id) ?? { playlist_items: 0, rentals: 0 };
+      u.playlist_items = Number(r.n);
+      usage.set(r.media_id, u);
+    }
+    for (const r of rentalCounts.rows) {
+      const u = usage.get(r.media_id) ?? { playlist_items: 0, rentals: 0 };
+      u.rentals = Number(r.n);
+      usage.set(r.media_id, u);
+    }
+  }
+  const decorate = (m: MediaRow) => ({
+    ...m,
+    usage: usage.get(m.id) ?? { playlist_items: 0, rentals: 0 },
+  });
+
   const byChecksum = new Map<string, MediaRow[]>();
   const byName = new Map<string, MediaRow[]>();
   for (const m of rows) {
@@ -131,28 +161,24 @@ router.get('/duplicates', async (req, res) => {
     }
   }
 
-  // Drop singletons. For byName, also drop the cluster if every row in it is
-  // already covered by a byChecksum group — no need to double-report.
   const checksumDupes = new Set<string>();
   const byChecksumOut = [...byChecksum.entries()]
     .filter(([, items]) => items.length > 1)
     .map(([checksum, items]) => {
       items.forEach((m) => checksumDupes.add(m.id));
-      return { checksum_sha256: checksum, count: items.length, items };
+      return { checksum_sha256: checksum, count: items.length, items: items.map(decorate) };
     })
     .sort((a, b) => b.count - a.count);
 
   const byNameOut = [...byName.entries()]
     .filter(([, items]) => items.length > 1)
-    .map(([name, items]) => ({
+    .map(([, items]) => ({
       original_name: items[0].original_name,
       count: items.length,
-      items,
-      // Tag rows that are *also* in a checksum group; UI can show "exact match"
-      // separately from "same name, different bytes".
+      items: items.map(decorate),
       items_with_checksum_match: items.filter((m) => checksumDupes.has(m.id)).map((m) => m.id),
     }))
-    .filter((g) => g.items.length > g.items_with_checksum_match.length) // skip if fully covered
+    .filter((g) => g.items.length > g.items_with_checksum_match.length)
     .sort((a, b) => b.count - a.count);
 
   res.json({ byChecksum: byChecksumOut, byName: byNameOut });
@@ -229,6 +255,26 @@ router.delete('/:id', requireOrgRole('org_admin'), async (req, res) => {
     return;
   }
   const media = rows[0];
+
+  // Pre-flight: playlist_items.media_id is ON DELETE RESTRICT, so deleting a
+  // media row that's still on a playlist will fail with a vague FK error.
+  // Surface it cleanly instead so the user knows what to clean up first.
+  const blockers = await query<{ playlist_id: string; playlist_name: string }>(
+    `SELECT DISTINCT pi.playlist_id, p.name AS playlist_name
+       FROM playlist_items pi
+       JOIN playlists p ON p.id = pi.playlist_id
+      WHERE pi.media_id = $1`,
+    [req.params.id],
+  );
+  if (blockers.rows.length > 0) {
+    res.status(409).json({
+      error: 'media is in use',
+      message: `Still referenced by ${blockers.rows.length} playlist item${blockers.rows.length === 1 ? '' : 's'}. Remove from the playlist(s) first.`,
+      playlists: blockers.rows,
+    });
+    return;
+  }
+
   const filepath = path.join(MEDIA_DIR, media.filename);
   const thumbPath = path.join(THUMB_DIR, `${media.id}.webp`);
   await query(`DELETE FROM media WHERE id = $1`, [req.params.id]);

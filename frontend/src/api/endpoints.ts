@@ -10,6 +10,7 @@ import type {
   InviteLookup,
   ManagedUser,
   Media,
+  MediaWithUsage,
   Organization,
   Playlist,
   PublicRentalStatus,
@@ -127,11 +128,11 @@ export const media = {
    */
   duplicates: () =>
     api<{
-      byChecksum: { checksum_sha256: string; count: number; items: Media[] }[];
+      byChecksum: { checksum_sha256: string; count: number; items: MediaWithUsage[] }[];
       byName: {
         original_name: string;
         count: number;
-        items: Media[];
+        items: MediaWithUsage[];
         items_with_checksum_match: string[];
       }[];
     }>('/media/duplicates'),

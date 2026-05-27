@@ -2,7 +2,7 @@ import { ChangeEvent, useEffect, useState } from 'react';
 import { media as mediaApi } from '../api/endpoints';
 import { useAuth } from '../auth';
 import { Thumbnail } from '../components/Thumbnail';
-import type { Media } from '../types';
+import type { Media, MediaWithUsage } from '../types';
 
 function fmtSize(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -261,39 +261,70 @@ function DupeGroup({
   onDelete,
 }: {
   label: string;
-  items: Media[];
+  items: MediaWithUsage[];
   onDelete: (id: string) => void;
 }) {
   return (
     <div style={{ borderTop: '1px solid var(--border)', padding: '12px 0' }}>
       <div style={{ fontWeight: 600, marginBottom: 8 }}>{label}</div>
       <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
-        {items.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: 8,
-              width: 180,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-            }}
-          >
-            <Thumbnail m={m} />
-            <div style={{ fontSize: 12, wordBreak: 'break-all' }}>{m.original_name}</div>
-            <div className="muted" style={{ fontSize: 11 }}>
-              {fmtSize(Number(m.size_bytes))} · {new Date(m.created_at).toLocaleDateString()}
+        {items.map((m) => {
+          const inPlaylists = m.usage.playlist_items;
+          const inRentals = m.usage.rentals;
+          const blocked = inPlaylists > 0;
+          const isOrphan = inPlaylists === 0 && inRentals === 0;
+          return (
+            <div
+              key={m.id}
+              style={{
+                border: isOrphan ? '2px solid #f59e0b' : '1px solid var(--border)',
+                borderRadius: 6,
+                padding: 8,
+                width: 180,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                background: isOrphan ? 'rgba(245, 158, 11, 0.06)' : undefined,
+              }}
+            >
+              <Thumbnail m={m} />
+              <div style={{ fontSize: 12, wordBreak: 'break-all' }}>{m.original_name}</div>
+              <div className="muted" style={{ fontSize: 11 }}>
+                {fmtSize(Number(m.size_bytes))} · {new Date(m.created_at).toLocaleDateString()}
+              </div>
+              <div className="muted" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+                {m.id.slice(0, 8)}…
+              </div>
+              {isOrphan ? (
+                <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+                  Not used anywhere — likely the orphan
+                </div>
+              ) : (
+                <div style={{ fontSize: 11 }}>
+                  {inPlaylists > 0 && (
+                    <div style={{ color: '#ef4444' }}>
+                      In {inPlaylists} playlist item{inPlaylists === 1 ? '' : 's'}
+                    </div>
+                  )}
+                  {inRentals > 0 && (
+                    <div className="muted">
+                      In {inRentals} rental{inRentals === 1 ? '' : 's'}
+                    </div>
+                  )}
+                </div>
+              )}
+              <button
+                className="danger"
+                style={{ fontSize: 12, opacity: blocked ? 0.5 : 1 }}
+                disabled={blocked}
+                title={blocked ? 'Remove from playlist(s) first' : undefined}
+                onClick={() => onDelete(m.id)}
+              >
+                {blocked ? 'In use' : 'Delete'}
+              </button>
             </div>
-            <div className="muted" style={{ fontSize: 11, fontFamily: 'monospace' }}>
-              {m.id.slice(0, 8)}…
-            </div>
-            <button className="danger" style={{ fontSize: 12 }} onClick={() => onDelete(m.id)}>
-              Delete
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

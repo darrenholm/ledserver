@@ -11,6 +11,8 @@ function fmtSize(b: number): string {
   return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+type DuplicatesResponse = Awaited<ReturnType<typeof mediaApi.duplicates>>;
+
 export default function MediaPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'org_admin' || user?.role === 'super_admin';
@@ -20,11 +22,27 @@ export default function MediaPage() {
   const [uploading, setUploading] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
 
+  const [dupes, setDupes] = useState<DuplicatesResponse | null>(null);
+  const [dupesOpen, setDupesOpen] = useState(false);
+  const [dupesLoading, setDupesLoading] = useState(false);
+
   const refresh = () =>
     mediaApi
       .list()
       .then(setItems)
       .catch((e) => setErr((e as Error).message));
+
+  const refreshDupes = async () => {
+    setDupesLoading(true);
+    try {
+      const d = await mediaApi.duplicates();
+      setDupes(d);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setDupesLoading(false);
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -39,6 +57,7 @@ export default function MediaPage() {
     try {
       await mediaApi.upload(file);
       refresh();
+      if (dupesOpen) refreshDupes();
     } catch (ex) {
       setErr((ex as Error).message);
     } finally {
@@ -52,6 +71,7 @@ export default function MediaPage() {
     try {
       await mediaApi.remove(id);
       refresh();
+      if (dupesOpen) refreshDupes();
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -72,15 +92,36 @@ export default function MediaPage() {
     }
   };
 
+  const onToggleDupes = async () => {
+    const next = !dupesOpen;
+    setDupesOpen(next);
+    if (next && !dupes) await refreshDupes();
+  };
+
   const missingThumbs = items.filter(
     (m) => m.mime_type.startsWith('image/') && !m.thumbnail_url,
   ).length;
+
+  const dupeCount =
+    (dupes?.byChecksum.reduce((n, g) => n + g.count, 0) ?? 0) +
+    (dupes?.byName.reduce((n, g) => n + g.count, 0) ?? 0);
 
   return (
     <div className="stack">
       <div className="row between">
         <h1 style={{ margin: 0 }}>Media</h1>
         <div className="row" style={{ gap: 8 }}>
+          {isAdmin && (
+            <button className="secondary" onClick={onToggleDupes} disabled={dupesLoading}>
+              {dupesLoading
+                ? 'Scanning…'
+                : dupesOpen
+                  ? 'Hide duplicates'
+                  : dupes
+                    ? `Find duplicates (${dupeCount} flagged)`
+                    : 'Find duplicates'}
+            </button>
+          )}
           {isAdmin && missingThumbs > 0 && (
             <button className="secondary" onClick={onBackfill} disabled={backfilling}>
               {backfilling ? 'Generating…' : `Generate ${missingThumbs} missing thumbnail${missingThumbs === 1 ? '' : 's'}`}
@@ -105,6 +146,8 @@ export default function MediaPage() {
 
       {err && <div className="error-banner">{err}</div>}
       {info && <div className="success-banner">{info}</div>}
+
+      {dupesOpen && dupes && <DuplicatesPanel data={dupes} onDelete={onDelete} />}
 
       <div className="card" style={{ padding: 0 }}>
         <table>
@@ -140,6 +183,117 @@ export default function MediaPage() {
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Renders the two duplicate groupings (exact-bytes and same-filename). The
+ * "exact" section is safe to bulk-clean; the "same filename, different bytes"
+ * section is where re-exports go to hide — admin needs to look at the
+ * thumbnails and decide. We don't pre-select anything; the user clicks Delete
+ * on whichever rows they want to drop.
+ */
+function DuplicatesPanel({
+  data,
+  onDelete,
+}: {
+  data: DuplicatesResponse;
+  onDelete: (id: string) => void;
+}) {
+  const empty = data.byChecksum.length === 0 && data.byName.length === 0;
+  return (
+    <div className="card" style={{ borderColor: '#f59e0b' }}>
+      <h3 style={{ marginTop: 0 }}>Duplicate uploads</h3>
+      {empty && (
+        <p className="muted" style={{ margin: 0 }}>
+          No duplicates found. Every file is unique by content and filename.
+        </p>
+      )}
+
+      {data.byChecksum.length > 0 && (
+        <>
+          <h4 style={{ marginBottom: 4 }}>Exact duplicates ({data.byChecksum.length} group{data.byChecksum.length === 1 ? '' : 's'})</h4>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            These rows are bit-for-bit identical (same checksum). Safe to delete any
+            of them as long as the one you keep is the one your playlists / contracts
+            point at — check the Playlists page if you're unsure.
+          </p>
+          {data.byChecksum.map((g) => (
+            <DupeGroup
+              key={g.checksum_sha256}
+              label={`${g.count} copies — checksum ${g.checksum_sha256.slice(0, 12)}…`}
+              items={g.items}
+              onDelete={onDelete}
+            />
+          ))}
+        </>
+      )}
+
+      {data.byName.length > 0 && (
+        <>
+          <h4 style={{ marginBottom: 4, marginTop: 16 }}>
+            Same filename, different bytes ({data.byName.length} group{data.byName.length === 1 ? '' : 's'})
+          </h4>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            These rows share a filename but the files differ — usually because the
+            artwork was re-exported and re-uploaded under the same name. Compare the
+            thumbnails to figure out which is current. Delete the stale one(s).
+          </p>
+          {data.byName.map((g) => (
+            <DupeGroup
+              key={g.original_name}
+              label={`${g.count} uploads named "${g.original_name}"`}
+              items={g.items}
+              onDelete={onDelete}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DupeGroup({
+  label,
+  items,
+  onDelete,
+}: {
+  label: string;
+  items: Media[];
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', padding: '12px 0' }}>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}>{label}</div>
+      <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+        {items.map((m) => (
+          <div
+            key={m.id}
+            style={{
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: 8,
+              width: 180,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <Thumbnail m={m} />
+            <div style={{ fontSize: 12, wordBreak: 'break-all' }}>{m.original_name}</div>
+            <div className="muted" style={{ fontSize: 11 }}>
+              {fmtSize(Number(m.size_bytes))} · {new Date(m.created_at).toLocaleDateString()}
+            </div>
+            <div className="muted" style={{ fontSize: 11, fontFamily: 'monospace' }}>
+              {m.id.slice(0, 8)}…
+            </div>
+            <button className="danger" style={{ fontSize: 12 }} onClick={() => onDelete(m.id)}>
+              Delete
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -90,6 +90,74 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
+/**
+ * Surface probable duplicate uploads so admins can clean them up. Two flavours:
+ *
+ *   - byChecksum: rows that share an identical sha256. These are bit-for-bit
+ *     duplicates — same file uploaded twice. Always safe to dedupe (keep the
+ *     one that's actually referenced by a playlist/rental; delete the rest).
+ *
+ *   - byName: rows that share the same original_name but different checksums.
+ *     Usually means someone re-exported the artwork (different bytes) and
+ *     uploaded under the same filename — which is exactly how the
+ *     "Coldwell05042026.png" / "Mortgage Centre" confusion arose: the playlist
+ *     is pointing at the *old* upload, the rental at the *new* one, and they
+ *     look identical to a human. Needs human eyeballs because the bytes
+ *     genuinely differ; the UI shows thumbnails side by side.
+ *
+ * Both groupings exclude singletons. Sorted by group size descending so the
+ * worst offenders bubble up.
+ */
+router.get('/duplicates', async (req, res) => {
+  const { clause, params } = orgClause(req, 'organization_id', 1);
+  const { rows } = await query<MediaRow>(
+    `SELECT * FROM media WHERE 1=1 ${clause} ORDER BY created_at DESC`,
+    params,
+  );
+
+  const byChecksum = new Map<string, MediaRow[]>();
+  const byName = new Map<string, MediaRow[]>();
+  for (const m of rows) {
+    if (m.checksum_sha256) {
+      const arr = byChecksum.get(m.checksum_sha256) ?? [];
+      arr.push(m);
+      byChecksum.set(m.checksum_sha256, arr);
+    }
+    const nameKey = (m.original_name ?? '').trim().toLowerCase();
+    if (nameKey) {
+      const arr = byName.get(nameKey) ?? [];
+      arr.push(m);
+      byName.set(nameKey, arr);
+    }
+  }
+
+  // Drop singletons. For byName, also drop the cluster if every row in it is
+  // already covered by a byChecksum group — no need to double-report.
+  const checksumDupes = new Set<string>();
+  const byChecksumOut = [...byChecksum.entries()]
+    .filter(([, items]) => items.length > 1)
+    .map(([checksum, items]) => {
+      items.forEach((m) => checksumDupes.add(m.id));
+      return { checksum_sha256: checksum, count: items.length, items };
+    })
+    .sort((a, b) => b.count - a.count);
+
+  const byNameOut = [...byName.entries()]
+    .filter(([, items]) => items.length > 1)
+    .map(([name, items]) => ({
+      original_name: items[0].original_name,
+      count: items.length,
+      items,
+      // Tag rows that are *also* in a checksum group; UI can show "exact match"
+      // separately from "same name, different bytes".
+      items_with_checksum_match: items.filter((m) => checksumDupes.has(m.id)).map((m) => m.id),
+    }))
+    .filter((g) => g.items.length > g.items_with_checksum_match.length) // skip if fully covered
+    .sort((a, b) => b.count - a.count);
+
+  res.json({ byChecksum: byChecksumOut, byName: byNameOut });
+});
+
 router.get('/:id', async (req, res) => {
   const { clause, params } = orgClause(req, 'organization_id', 2);
   const { rows } = await query<MediaRow>(

@@ -121,6 +121,20 @@ export const media = {
       '/media/backfill-thumbnails',
       { method: 'POST' },
     ),
+  /**
+   * Finds probable duplicate uploads. byChecksum = bit-for-bit identical;
+   * byName = same filename with different bytes (re-export trap).
+   */
+  duplicates: () =>
+    api<{
+      byChecksum: { checksum_sha256: string; count: number; items: Media[] }[];
+      byName: {
+        original_name: string;
+        count: number;
+        items: Media[];
+        items_with_checksum_match: string[];
+      }[];
+    }>('/media/duplicates'),
 };
 
 export const playlists = {

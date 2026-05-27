@@ -362,6 +362,15 @@ export default function DeviceDetail() {
                         const r = await devicesApi.pullInfo(device.id);
                         setDevice(r.device);
                         setDForm(deviceToDetailsForm(r.device));
+                        if (r.notice) {
+                          // Surface the soft notice as info, not an error.
+                          // err is the page-level banner state; we reuse it
+                          // for the message but the wording itself is
+                          // informational rather than an error.
+                          setErr(r.notice);
+                        } else if (r.pulled.widthPx && r.pulled.heightPx) {
+                          setErr(null);
+                        }
                       })
                     }
                     disabled={busy}

@@ -191,17 +191,46 @@ export class VnnoxCloudClient implements CoexTransport {
       const hit = screens.items?.find((s) => s.sn === this.sn);
       if (hit) {
         if (typeof hit.brightness === 'number') brightness = hit.brightness;
-        // Prefer the structured width/height fields if VNNOX returns them;
-        // fall back to parsing the legacy "WIDTHxHEIGHT" string.
-        if (typeof hit.width === 'number' && typeof hit.height === 'number') {
-          widthPx = hit.width;
-          heightPx = hit.height;
+        // VNNOX's field names for screen geometry have varied across API
+        // versions and tiers. Try every shape we've seen:
+        //   - flat width/height ints (modern v2)
+        //   - "WIDTHxHEIGHT" resolution string (older response)
+        //   - screenWidth / screenHeight / pixelWidth / pixelHeight (alt naming)
+        //   - nested inside screenInfo / size / specs (deep tiers)
+        // Use a loose Record cast so we can probe field names that aren't
+        // in the typed interface without a TypeScript fight.
+        const raw = hit as unknown as Record<string, unknown>;
+        const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+        const w =
+          num(raw.width) ?? num(raw.screenWidth) ?? num(raw.pixelWidth) ??
+          num((raw.screenInfo as Record<string, unknown> | undefined)?.width) ??
+          num((raw.size as Record<string, unknown> | undefined)?.width) ??
+          num((raw.specs as Record<string, unknown> | undefined)?.width);
+        const h =
+          num(raw.height) ?? num(raw.screenHeight) ?? num(raw.pixelHeight) ??
+          num((raw.screenInfo as Record<string, unknown> | undefined)?.height) ??
+          num((raw.size as Record<string, unknown> | undefined)?.height) ??
+          num((raw.specs as Record<string, unknown> | undefined)?.height);
+        if (w && h) {
+          widthPx = w;
+          heightPx = h;
         } else if (typeof hit.resolution === 'string') {
           const m = hit.resolution.match(/(\d+)\s*[x×]\s*(\d+)/i);
           if (m) {
             widthPx = parseInt(m[1], 10);
             heightPx = parseInt(m[2], 10);
           }
+        }
+        if (!widthPx || !heightPx) {
+          // Diagnostic: dump every key on the screen-list item so we can
+          // see what VNNOX actually returns for this tier. After one
+          // Pull-from-VNNOX click, the Railway log shows the answer.
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[vnnox] no resolution for sn=${this.sn}; screen-list keys=` +
+            JSON.stringify(Object.keys(raw)) +
+            ` raw=` + JSON.stringify(raw),
+          );
         }
       }
     } catch {

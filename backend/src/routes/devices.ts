@@ -440,7 +440,16 @@ router.post('/:id/pull-info', requireOrgRole('org_admin', 'org_operator'), async
   if (status.widthPx)  updates.widthPx  = status.widthPx;
   if (status.heightPx) updates.heightPx = status.heightPx;
   if (Object.keys(updates).length === 0) {
-    res.status(409).json({ error: 'VNNOX did not return resolution; nothing to apply' });
+    // Soft response: not an error, just nothing to apply. The frontend
+    // can render this as an info notice and the admin types the
+    // resolution manually. Raw VNNOX shape lands in the Railway log via
+    // vnnoxClient — share that with us if you want the auto-pull to
+    // start working for this tier.
+    res.json({
+      device,
+      pulled: {},
+      notice: "VNNOX didn't return a resolution for this screen. Likely the API tier doesn't expose it. Type it in below; the rest of the app will use the manual values.",
+    });
     return;
   }
   const { rows } = await query<DeviceRow>(

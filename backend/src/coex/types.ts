@@ -12,6 +12,14 @@ export interface DeviceStatus {
   temperatureC?: number;
   currentPlaylistId?: string;
   uptimeSec?: number;
+  /**
+   * Screen pixel resolution when the transport can read it from the device.
+   * Used to auto-populate devices.width_px / devices.height_px on first
+   * status fetch so admin doesn't have to type them. Undefined when the
+   * provider doesn't expose it (lan_direct stub) or the call failed.
+   */
+  widthPx?: number;
+  heightPx?: number;
 }
 
 export interface PlaylistManifestItem {

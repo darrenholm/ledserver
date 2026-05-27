@@ -75,6 +75,9 @@ export const devices = {
   remove: (id: string) => api<void>(`/devices/${id}`, { method: 'DELETE' }),
   ping: (id: string) => api<{ ok: boolean; info: unknown }>(`/devices/${id}/ping`, { method: 'POST' }),
   status: (id: string) => api<DeviceStatus>(`/devices/${id}/status`),
+  /** Force-refresh resolution from VNNOX. Overwrites width_px/height_px on the device row. */
+  pullInfo: (id: string) =>
+    api<{ device: Device; pulled: { widthPx?: number; heightPx?: number } }>(`/devices/${id}/pull-info`, { body: {} }),
   setBrightness: (id: string, brightness: number) =>
     api<{ ok: boolean }>(`/devices/${id}/brightness`, { body: { brightness } }),
   reboot: (id: string) => api<{ ok: boolean }>(`/devices/${id}/reboot`, { method: 'POST' }),

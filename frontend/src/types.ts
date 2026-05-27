@@ -70,6 +70,10 @@ export interface DeviceStatus {
   temperatureC?: number;
   currentPlaylistId?: string;
   uptimeSec?: number;
+  // Surfaced from VNNOX on status fetch so callers (and the auto-populate
+  // logic on the backend) can pick up screen geometry without an extra call.
+  widthPx?: number;
+  heightPx?: number;
 }
 
 export interface Media {

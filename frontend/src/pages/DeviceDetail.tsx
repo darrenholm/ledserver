@@ -353,7 +353,25 @@ export default function DeviceDetail() {
               <div><span className="muted">Model:</span> {device.model ?? '—'}</div>
               <div><span className="muted">Firmware:</span> {device.firmware ?? '—'}</div>
               <div><span className="muted">Location:</span> {device.location ?? '—'}</div>
-              <div><span className="muted">Resolution:</span> {device.width_px && device.height_px ? `${device.width_px} × ${device.height_px}` : '—'}</div>
+              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <span><span className="muted">Resolution:</span> {device.width_px && device.height_px ? `${device.width_px} × ${device.height_px}` : '—'}</span>
+                {device.provider === 'vnnox' && (
+                  <button
+                    onClick={() =>
+                      action(async () => {
+                        const r = await devicesApi.pullInfo(device.id);
+                        setDevice(r.device);
+                        setDForm(deviceToDetailsForm(r.device));
+                      })
+                    }
+                    disabled={busy}
+                    style={{ fontSize: 12, padding: '2px 8px' }}
+                    title="Force-refresh resolution from VNNOX"
+                  >
+                    Pull from VNNOX
+                  </button>
+                )}
+              </div>
               <div><span className="muted">Device key:</span> <code style={{ fontSize: 12 }}>{device.device_key}</code></div>
               {device.provider === 'vnnox' && (
                 <div style={{ marginTop: 8 }}>

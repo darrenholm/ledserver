@@ -403,7 +403,52 @@ router.get('/:id/status', async (req, res) => {
     `UPDATE devices SET online = $2, last_seen_at = NOW(), updated_at = NOW() WHERE id = $1`,
     [device.id, status.online],
   );
+  // Auto-populate resolution when VNNOX returned it AND the device row's
+  // dimensions are still NULL. Never overwrite admin-typed values — if
+  // someone explicitly set 1920x1080 we trust their intent over whatever
+  // VNNOX is reporting. The /pull-info endpoint below forces a refresh
+  // when an admin wants to override.
+  if (
+    status.widthPx && status.heightPx &&
+    (device.width_px == null || device.height_px == null)
+  ) {
+    await query(
+      `UPDATE devices SET width_px = COALESCE(width_px, $2),
+                          height_px = COALESCE(height_px, $3),
+                          updated_at = NOW()
+        WHERE id = $1`,
+      [device.id, status.widthPx, status.heightPx],
+    );
+  }
   res.json(status);
+});
+
+/**
+ * Force-refresh device metadata from VNNOX. Overwrites width_px/height_px
+ * with what VNNOX is currently reporting. Use when admin knows the screen
+ * was reconfigured and the stored values are wrong.
+ */
+router.post('/:id/pull-info', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
+  if (!device) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const client = coexRegistry.get(connInfoFor(device));
+  const status = await client.getStatus();
+  const updates: { widthPx?: number; heightPx?: number } = {};
+  if (status.widthPx)  updates.widthPx  = status.widthPx;
+  if (status.heightPx) updates.heightPx = status.heightPx;
+  if (Object.keys(updates).length === 0) {
+    res.status(409).json({ error: 'VNNOX did not return resolution; nothing to apply' });
+    return;
+  }
+  const { rows } = await query<DeviceRow>(
+    `UPDATE devices SET width_px = $1, height_px = $2, updated_at = NOW()
+      WHERE id = $3 RETURNING *`,
+    [updates.widthPx ?? device.width_px, updates.heightPx ?? device.height_px, device.id],
+  );
+  res.json({ device: rows[0], pulled: updates });
 });
 
 const brightnessSchema = z.object({ brightness: z.number().int().min(0).max(100) });

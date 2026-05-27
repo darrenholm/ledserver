@@ -59,6 +59,13 @@ interface ScreenListItem {
   status: number;                // 1 normal, 2 offline, 3 risky, 4 faulty
   brightness?: number;           // 0-100
   envBrightness?: number;
+  // Pixel geometry. VNNOX has used a couple of different field names across
+  // API versions / tiers — `width` + `height` on the modern v2 list, and a
+  // formatted `resolution` string ("1920x1080") on some older responses.
+  // We probe both at runtime and let either path populate the device row.
+  width?: number;
+  height?: number;
+  resolution?: string;
 }
 
 interface BatchResult {
@@ -169,19 +176,33 @@ export class VnnoxCloudClient implements CoexTransport {
     // online/offline comes from the player API (fast, lightweight).
     const player = await this.findPlayer();
 
-    // brightness + MAC come from the screen list endpoint. We tolerate failure
-    // because (a) the screen list is "advanced" and may be 403 on lower tiers,
-    // and (b) we'd rather return online=true with brightness=0 than fail the
-    // whole status call.
+    // brightness + MAC + screen geometry come from the screen list endpoint.
+    // We tolerate failure because (a) the screen list is "advanced" and may
+    // be 403 on lower tiers, and (b) we'd rather return online=true with
+    // brightness=0 than fail the whole status call.
     let brightness = 0;
+    let widthPx: number | undefined;
+    let heightPx: number | undefined;
     try {
       const screens = await this.request<{ items: ScreenListItem[] }>(
         'GET',
         '/v2/device-status-monitor/screen/list?pageNumber=0&pageSize=1000',
       );
       const hit = screens.items?.find((s) => s.sn === this.sn);
-      if (hit && typeof hit.brightness === 'number') {
-        brightness = hit.brightness;
+      if (hit) {
+        if (typeof hit.brightness === 'number') brightness = hit.brightness;
+        // Prefer the structured width/height fields if VNNOX returns them;
+        // fall back to parsing the legacy "WIDTHxHEIGHT" string.
+        if (typeof hit.width === 'number' && typeof hit.height === 'number') {
+          widthPx = hit.width;
+          heightPx = hit.height;
+        } else if (typeof hit.resolution === 'string') {
+          const m = hit.resolution.match(/(\d+)\s*[x×]\s*(\d+)/i);
+          if (m) {
+            widthPx = parseInt(m[1], 10);
+            heightPx = parseInt(m[2], 10);
+          }
+        }
       }
     } catch {
       // swallow — best-effort enrichment
@@ -190,6 +211,8 @@ export class VnnoxCloudClient implements CoexTransport {
     return {
       online: player.onlineStatus === 1,
       brightness,
+      widthPx,
+      heightPx,
     };
   }
 

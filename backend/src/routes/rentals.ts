@@ -440,9 +440,19 @@ const replaceMediaSchema = z.object({ mediaId: z.string().uuid() });
 router.patch('/:id/media', authRequired, requireRole('super_admin'), async (req, res) => {
   const { mediaId } = replaceMediaSchema.parse(req.body);
 
-  // Verify the rental exists and the media is in the same org.
-  const rentalRes = await query<{ device_id: string; status: string; organization_id: string }>(
-    `SELECT r.device_id, r.status, d.organization_id
+  // Verify the rental exists and the media is in the same org. Also pull
+  // the OLD media id + device's base_playlist so we can chase the swap
+  // through the playlist below.
+  const rentalRes = await query<{
+    device_id: string;
+    status: string;
+    organization_id: string;
+    old_media_id: string | null;
+    base_playlist_id: string | null;
+  }>(
+    `SELECT r.device_id, r.status, d.organization_id,
+            r.media_id AS old_media_id,
+            d.base_playlist_id
        FROM rentals r JOIN devices d ON d.id = r.device_id
       WHERE r.id = $1`,
     [req.params.id],
@@ -452,6 +462,8 @@ router.patch('/:id/media', authRequired, requireRole('super_admin'), async (req,
     return;
   }
   const orgId = rentalRes.rows[0].organization_id;
+  const oldMediaId = rentalRes.rows[0].old_media_id;
+  const basePlaylistId = rentalRes.rows[0].base_playlist_id;
 
   const mediaRes = await query<{ id: string }>(
     `SELECT id FROM media WHERE id = $1 AND organization_id = $2`,
@@ -466,6 +478,31 @@ router.patch('/:id/media', authRequired, requireRole('super_admin'), async (req,
     `UPDATE rentals SET media_id = $1, updated_at = NOW() WHERE id = $2`,
     [mediaId, req.params.id],
   );
+
+  // Chase the swap through this device's base playlist: if the old artwork
+  // file was in the rotation (which is how customers see most ads), update
+  // those playlist items to point at the new file. Without this, the
+  // playlist keeps the orphan and the new artwork only reaches VNNOX as
+  // an insertion program — leaving the playlist looking unattributed.
+  //
+  // Scoped to this device's base playlist only: a media row might be on
+  // unrelated playlists for unrelated devices, and we shouldn't follow
+  // those.
+  if (oldMediaId && oldMediaId !== mediaId && basePlaylistId) {
+    const swap = await query(
+      `UPDATE playlist_items
+          SET media_id = $1
+        WHERE playlist_id = $2 AND media_id = $3`,
+      [mediaId, basePlaylistId, oldMediaId],
+    );
+    if (swap.rowCount && swap.rowCount > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[replace-media] rental=${req.params.id} swapped ${swap.rowCount} playlist_items ` +
+        `from media=${oldMediaId} to media=${mediaId} on playlist=${basePlaylistId}`,
+      );
+    }
+  }
 
   // Mirror the new artwork into the client's L:\ folder. Best-effort —
   // never blocks the swap.

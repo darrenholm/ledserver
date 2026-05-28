@@ -90,6 +90,27 @@ export const devices = {
   stop: (id: string) => api<{ ok: boolean }>(`/devices/${id}/stop`, { method: 'POST' }),
   /** Re-publish the device's base program (base playlist + overlay widgets). */
   republishBase: (id: string) => api<{ ok: boolean }>(`/devices/${id}/republish-base`, { body: {} }),
+  /**
+   * Live weather snapshot for the weather-page preview UI. Optional
+   * `location` query reflects the unsaved form value so admin sees the
+   * preview change as they type. Backend resolves city names → coords via
+   * Open-Meteo's geocoder.
+   */
+  weatherPreview: (id: string, locationOverride?: string) => {
+    const q = locationOverride ? `?location=${encodeURIComponent(locationOverride)}` : '';
+    return api<{
+      location: string;
+      latitude: number;
+      longitude: number;
+      units: 'celsius' | 'fahrenheit';
+      temperatureC: number;
+      weatherCode: number;
+      conditionLabel: string;
+      conditionGlyph: string;
+      highC: number | null;
+      lowC: number | null;
+    }>(`/devices/${id}/weather-preview${q}`);
+  },
   bulkImport: (rows: Array<{
     name: string;
     latitude?: number | null;

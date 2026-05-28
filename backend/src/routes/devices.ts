@@ -423,6 +423,83 @@ router.post('/:id/ping', requireOrgRole('org_admin', 'org_operator'), async (req
   res.json({ ok: true, info });
 });
 
+/**
+ * Live weather snapshot for the DeviceDetail weather-page preview panel.
+ * Resolves location with the same precedence as the publish path
+ * (explicit override → overlay_weather_location → device lat/lng) so the
+ * preview matches what'll get pushed.
+ *
+ * `?location=` query param lets the UI pass an unsaved override from the
+ * form so the preview reacts to typing without saving first. Falls back
+ * to the saved location if not provided.
+ */
+router.get('/:id/weather-preview', async (req, res) => {
+  const device = await loadDevice(req);
+  if (!device) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const overrideRaw = typeof req.query.location === 'string' ? req.query.location : '';
+  const loc =
+    overrideRaw.trim()
+    || device.weather_page_location?.trim()
+    || device.overlay_weather_location?.trim()
+    || (device.latitude && device.longitude ? `${device.latitude},${device.longitude}` : '');
+  if (!loc) {
+    res.status(422).json({
+      error: 'no location resolvable for this device',
+      message: 'Set the device lat/lng (brightness card) or enter a location override.',
+    });
+    return;
+  }
+
+  // Parse "lat,lng" → numbers. If the user supplied a city name, geocode
+  // it via Open-Meteo's free geocoding endpoint first.
+  let lat: number | null = null;
+  let lng: number | null = null;
+  const m = loc.match(/^\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*$/);
+  if (m) {
+    lat = Number(m[1]);
+    lng = Number(m[2]);
+  } else {
+    try {
+      const gres = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(loc)}&count=1`,
+      );
+      if (gres.ok) {
+        const gdata = (await gres.json()) as { results?: { latitude: number; longitude: number }[] };
+        const hit = gdata.results?.[0];
+        if (hit) {
+          lat = hit.latitude;
+          lng = hit.longitude;
+        }
+      }
+    } catch {
+      // fall through to error below
+    }
+  }
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    res.status(422).json({
+      error: 'could not resolve location',
+      message: `Couldn't turn "${loc}" into coordinates. Try "City, Province" or "lat,lng" instead.`,
+    });
+    return;
+  }
+  try {
+    const { getCurrentWeather } = await import('../services/cloudCoverClient');
+    const snap = await getCurrentWeather(lat, lng);
+    res.json({
+      location: loc,
+      latitude: lat,
+      longitude: lng,
+      units: device.overlay_weather_units, // 'celsius' | 'fahrenheit'
+      ...snap,
+    });
+  } catch (err) {
+    res.status(502).json({ error: 'weather lookup failed', message: (err as Error).message });
+  }
+});
+
 router.get('/:id/status', async (req, res) => {
   const device = await loadDevice(req);
   if (!device) {

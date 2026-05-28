@@ -171,6 +171,55 @@ function WeatherPageCard({
     device.overlay_weather_location?.trim()
     || (device.latitude && device.longitude ? `${device.latitude},${device.longitude}` : '');
 
+  // Live preview: hit /weather-preview with the unsaved location so admin
+  // sees what the device will show before they Save. Debounced ~600ms so we
+  // don't hammer Open-Meteo on every keystroke. Snapshot is cached
+  // server-side per ~1km grid, so repeats are basically free.
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof devicesApi.weatherPreview>> | null>(null);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      setPreviewLoading(true);
+      setPreviewErr(null);
+      try {
+        const data = await devicesApi.weatherPreview(device.id, locationOverride.trim() || undefined);
+        if (!cancelled) setPreview(data);
+      } catch (e) {
+        if (!cancelled) {
+          setPreview(null);
+          setPreviewErr((e as Error).message);
+        }
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, locationOverride !== (device.weather_page_location ?? '') ? 600 : 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [device.id, locationOverride, device.weather_page_location]);
+
+  // Pick the rendered temperature units to match how VNNOX will display.
+  const showFahrenheit = preview?.units === 'fahrenheit';
+  const tempDisplay = preview
+    ? showFahrenheit
+      ? Math.round(preview.temperatureC * 9/5 + 32)
+      : Math.round(preview.temperatureC)
+    : null;
+  const hiLoDisplay = preview && preview.highC != null && preview.lowC != null
+    ? showFahrenheit
+      ? `${Math.round(preview.highC * 9/5 + 32)}/${Math.round(preview.lowC * 9/5 + 32)}°F`
+      : `${preview.highC}/${preview.lowC}°C`
+    : null;
+
+  // Aspect ratio for the preview frame — match the screen so it reads as a
+  // mini-billboard rather than a stretched browser box.
+  const aspect = device.width_px && device.height_px
+    ? `${device.width_px} / ${device.height_px}`
+    : '16 / 9';
+
   return (
     <div className="card">
       <h3 style={{ marginTop: 0 }}>Weather page (full-screen)</h3>
@@ -234,6 +283,95 @@ function WeatherPageCard({
           )}
         </>
       )}
+
+      <div style={{ marginTop: 16 }}>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+          Preview — approximates how the page will look on the screen. The
+          device renders this via NovaStar's native widget; styling will
+          differ slightly. Updates live as you change the location.
+        </div>
+        <div
+          style={{
+            aspectRatio: aspect,
+            maxWidth: 480,
+            borderRadius: 8,
+            overflow: 'hidden',
+            position: 'relative',
+            // Sky-blue gradient + scattered cloud silhouettes via SVG so we
+            // don't depend on any external asset. The real VNNOX template
+            // uses a similar palette.
+            background: previewLoading
+              ? '#0f172a'
+              : 'linear-gradient(180deg, #4ea0e0 0%, #6cb8e6 60%, #8ec9eb 100%)',
+            color: 'white',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background 0.4s ease',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+          }}
+        >
+          {/* Cloud silhouettes */}
+          <svg
+            viewBox="0 0 600 300"
+            preserveAspectRatio="none"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.5 }}
+          >
+            <ellipse cx="80"  cy="60"  rx="60" ry="22" fill="white" />
+            <ellipse cx="180" cy="40"  rx="48" ry="18" fill="white" />
+            <ellipse cx="490" cy="80"  rx="80" ry="26" fill="white" />
+            <ellipse cx="320" cy="240" rx="100" ry="30" fill="white" />
+            <ellipse cx="80"  cy="220" rx="60" ry="22" fill="white" />
+            <ellipse cx="540" cy="220" rx="55" ry="20" fill="white" />
+          </svg>
+
+          {previewErr && !preview && (
+            <div style={{ position: 'relative', textAlign: 'center', padding: 16, fontSize: 14 }}>
+              {previewErr}
+            </div>
+          )}
+          {!previewErr && previewLoading && !preview && (
+            <div style={{ position: 'relative', fontSize: 14, opacity: 0.8 }}>Loading weather…</div>
+          )}
+          {preview && (
+            <div
+              style={{
+                position: 'relative',
+                display: 'grid',
+                gridTemplateColumns: '1fr auto',
+                alignItems: 'center',
+                width: '90%',
+                gap: 24,
+                textShadow: '0 1px 3px rgba(0,0,0,0.25)',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 'clamp(14px, 3.5cqi, 22px)', fontWeight: 500, opacity: 0.95 }}>
+                  {preview.location}
+                </div>
+                <div
+                  style={{
+                    fontSize: 'clamp(48px, 18cqi, 120px)',
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    marginTop: 4,
+                  }}
+                >
+                  {tempDisplay}°{showFahrenheit ? 'F' : 'C'}
+                </div>
+                {hiLoDisplay && (
+                  <div style={{ fontSize: 'clamp(13px, 3cqi, 18px)', opacity: 0.95, marginTop: 8 }}>
+                    {hiLoDisplay} · {preview.conditionLabel}
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: 'clamp(48px, 16cqi, 96px)', lineHeight: 1 }}>
+                {preview.conditionGlyph}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
         <button

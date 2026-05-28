@@ -57,6 +57,12 @@ export interface Device {
   overlay_weather_position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
   overlay_weather_location: string | null;
   overlay_weather_units: 'metric' | 'imperial';
+  // Public-safety / weather alerts overlay (Environment Canada)
+  alerts_enabled: boolean;
+  alerts_severity_min: 'minor' | 'moderate' | 'severe' | 'extreme';
+  alerts_current_id: string | null;
+  alerts_current_text: string | null;
+  alerts_last_polled_at: string | null;
   // Ownership: shop-api.clients.id / projects.id (null = Holm-owned)
   owner_client_id: number | null;
   owner_project_id: number | null;

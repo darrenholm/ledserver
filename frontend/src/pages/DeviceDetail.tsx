@@ -67,6 +67,19 @@ function deviceToOverlayForm(d: Device): OverlayFormState {
   };
 }
 
+type Severity = 'minor' | 'moderate' | 'severe' | 'extreme';
+interface AlertsFormState {
+  enabled: boolean;
+  severityMin: Severity;
+}
+
+function deviceToAlertsForm(d: Device): AlertsFormState {
+  return {
+    enabled: d.alerts_enabled ?? false,
+    severityMin: ((d.alerts_severity_min as Severity) ?? 'severe'),
+  };
+}
+
 interface DetailsFormState {
   model: string;
   firmware: string;
@@ -147,6 +160,7 @@ export default function DeviceDetail() {
   const [mForm, setMForm] = useState<MarketingFormState | null>(null);
   const [sForm, setSForm] = useState<SlotsFormState | null>(null);
   const [oForm, setOForm] = useState<OverlayFormState | null>(null);
+  const [aForm, setAForm] = useState<AlertsFormState | null>(null);
   const [orgPlaylists, setOrgPlaylists] = useState<Playlist[]>([]);
   // Owner client lookup + search ------------------------------------------
   const [ownerInfo, setOwnerInfo] = useState<ClientHit | null>(null);
@@ -174,6 +188,7 @@ export default function DeviceDetail() {
         setMForm(deviceToMarketingForm(d));
         setSForm(deviceToSlotsForm(d));
         setOForm(deviceToOverlayForm(d));
+        setAForm(deviceToAlertsForm(d));
       })
       .catch((e) => setErr((e as Error).message));
     // Playlists for the base-rotation picker. Best-effort: if it fails, the
@@ -1220,6 +1235,99 @@ export default function DeviceDetail() {
           </button>
         </div>
       </div>
+
+      {aForm && (
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Public safety alerts</h3>
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            When enabled, this device shows a scrolling banner along the bottom
+            during active Environment Canada alerts that cover this location.
+            Uses the device's lat/lng. Updates within 5 minutes of an alert
+            being issued or cleared.
+          </div>
+
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              id="alerts-enabled"
+              checked={aForm.enabled}
+              onChange={(e) => setAForm({ ...aForm, enabled: e.target.checked })}
+            />
+            <label htmlFor="alerts-enabled" style={{ marginBottom: 0 }}>
+              Show Environment Canada alerts on this screen
+            </label>
+          </div>
+
+          {aForm.enabled && (
+            <div style={{ marginTop: 12, maxWidth: 360 }}>
+              <label>Minimum severity to display</label>
+              <select
+                value={aForm.severityMin}
+                onChange={(e) =>
+                  setAForm({ ...aForm, severityMin: e.target.value as Severity })
+                }
+              >
+                <option value="extreme">Extreme only (e.g. tornado warning)</option>
+                <option value="severe">Severe + above (warnings — recommended)</option>
+                <option value="moderate">Moderate + above (watches included)</option>
+                <option value="minor">Everything (advisories, special statements)</option>
+              </select>
+              <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                "Severe" is the sensible default — surfaces tornado, blizzard,
+                and other actual-impact warnings while suppressing routine
+                special weather statements.
+              </div>
+            </div>
+          )}
+
+          {device.alerts_current_text && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 8,
+                background: 'rgba(245, 158, 11, 0.1)',
+                border: '1px solid #f59e0b',
+                borderRadius: 4,
+                fontSize: 13,
+              }}
+            >
+              <strong>Currently showing:</strong> {device.alerts_current_text}
+            </div>
+          )}
+          {!device.alerts_current_text && aForm.enabled && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+              No active alerts for this location right now.
+              {device.alerts_last_polled_at && (
+                <> Last checked {new Date(device.alerts_last_polled_at).toLocaleString()}.</>
+              )}
+            </div>
+          )}
+          {(!device.latitude || !device.longitude) && aForm.enabled && (
+            <div className="error-banner" style={{ marginTop: 12 }}>
+              This device has no lat/lng set (in the brightness card above), so
+              alerts can't be matched. Set the coordinates first.
+            </div>
+          )}
+
+          <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
+            <button
+              disabled={busy}
+              onClick={() =>
+                action(async () => {
+                  const updated = await devicesApi.update(device.id, {
+                    alertsEnabled: aForm.enabled,
+                    alertsSeverityMin: aForm.severityMin,
+                  } as unknown as Parameters<typeof devicesApi.update>[1]);
+                  setDevice(updated);
+                  setAForm(deviceToAlertsForm(updated));
+                })
+              }
+            >
+              Save alerts settings
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Marketing (public /advertise listing)</h3>

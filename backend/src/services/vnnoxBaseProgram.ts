@@ -80,12 +80,21 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
     overlay_weather_units: string;
     latitude: string | null;
     longitude: string | null;
+    /**
+     * Set by deviceAlertsService when an active public-safety / weather
+     * alert covers the device. Stays NULL when no alert is active OR
+     * alerts_enabled is false. Rendering it here means the alert banner
+     * shows up in the next base-program republish automatically — admin
+     * doesn't have to flip anything else.
+     */
+    alerts_current_text: string | null;
   }>(
     `SELECT device_key AS sn, provider, base_playlist_id,
             overlay_clock_enabled, overlay_clock_position, overlay_clock_format,
             overlay_weather_enabled, overlay_weather_position, overlay_weather_location,
             overlay_weather_units,
-            latitude, longitude
+            latitude, longitude,
+            alerts_current_text
        FROM devices WHERE id = $1`,
     [deviceId],
   );
@@ -174,6 +183,43 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
       layout: OVERLAY_LAYOUTS[d.overlay_weather_position],
     });
   }
+  // Public safety / weather alert overlay — a scrolling TEXT widget
+  // pinned to the bottom 10% of the panel. We deliberately put it on the
+  // bottom (where most ad copy doesn't compete) and at high zIndex so it
+  // stays visible even if an ad has its own bottom strip. Only emitted
+  // when deviceAlertsService has stamped alerts_current_text on the row.
+  //
+  // NovaStar's TEXT widget field names vary by VNNOX firmware; we send
+  // a few common spellings (text/content/value, scroll/marquee/scrollMode)
+  // so the device picks whichever it understands.
+  if (d.alerts_current_text) {
+    overlays.push({
+      type: 'TEXT',
+      name: 'alert-overlay',
+      text: d.alerts_current_text,
+      content: d.alerts_current_text,
+      value: d.alerts_current_text,
+      // High-contrast amber on black — easy to read at a distance and
+      // unmistakably an alert vs. an ad. Sized at ~6% of panel height so
+      // it reads from the road at typical billboard distances.
+      fontSize: '6%',
+      color: '#ffcc00',
+      backgroundColor: '#000000',
+      // Scroll right-to-left at a moderate speed. Speed units are pixels
+      // per second on most VNNOX versions; 60 is roughly highway-billboard
+      // legibility.
+      scroll: true,
+      marquee: true,
+      scrollMode: 'left',
+      scrollSpeed: 60,
+      // Loop while the program is up — VNNOX clears the widget when the
+      // program is republished without it (the no-alert case).
+      repeatTimes: -1,
+      zIndex: 200,
+      layout: { x: '0%', y: '90%', width: '100%', height: '10%' },
+    });
+  }
+
   if (overlays.length > 0) {
     for (const page of pages) {
       page.widgets.push(...overlays);

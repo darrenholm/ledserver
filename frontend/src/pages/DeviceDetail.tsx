@@ -146,6 +146,123 @@ function formatTime(d: Date | null): string {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+/**
+ * Self-contained card for the full-page weather widget. Kept as its own
+ * component (rather than inline like the other cards) because it has its
+ * own local form state — no point sharing scope with brightness/overlay
+ * forms above. Calls back with the updated device row so the parent
+ * stays in sync.
+ */
+function WeatherPageCard({
+  device,
+  busy,
+  action,
+  onUpdated,
+}: {
+  device: Device;
+  busy: boolean;
+  action: (fn: () => Promise<unknown>) => Promise<void>;
+  onUpdated: (d: Device) => void;
+}) {
+  const [enabled, setEnabled] = useState(device.weather_page_enabled ?? false);
+  const [durationMs, setDurationMs] = useState(device.weather_page_duration_ms ?? 8000);
+  const [locationOverride, setLocationOverride] = useState(device.weather_page_location ?? '');
+  const fallbackLocation =
+    device.overlay_weather_location?.trim()
+    || (device.latitude && device.longitude ? `${device.latitude},${device.longitude}` : '');
+
+  return (
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Weather page (full-screen)</h3>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+        Slots a full-screen weather page into the rotation — the NovaStar
+        "Basic Weather" look (sky background, large temperature, condition
+        icon). Different from the small corner overlay above: this takes a
+        whole slot in the rotation. Available to any client who owns or
+        rents this screen.
+      </div>
+
+      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <input
+          type="checkbox"
+          id="weather-page-enabled"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+        />
+        <label htmlFor="weather-page-enabled" style={{ marginBottom: 0 }}>
+          Show a full-screen weather page in the rotation
+        </label>
+      </div>
+
+      {enabled && (
+        <>
+          <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 200 }}>
+              <label>Page duration (seconds)</label>
+              <input
+                type="number"
+                min={3}
+                max={60}
+                step={1}
+                value={Math.round(durationMs / 1000)}
+                onChange={(e) =>
+                  setDurationMs(Math.max(3, Math.min(60, parseInt(e.target.value, 10) || 8)) * 1000)
+                }
+              />
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                3-60 sec. 8 sec is the sweet spot for highway visibility.
+              </div>
+            </div>
+            <div style={{ minWidth: 260, flex: 1 }}>
+              <label>Location override</label>
+              <input
+                value={locationOverride}
+                onChange={(e) => setLocationOverride(e.target.value)}
+                placeholder={fallbackLocation || 'Falls back to device lat/lng'}
+              />
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Optional. e.g. "Toronto, ON" or "43.65,-79.38". Blank uses the
+                weather overlay's location, then the device's lat/lng.
+              </div>
+            </div>
+          </div>
+          {!fallbackLocation && !locationOverride.trim() && (
+            <div className="error-banner" style={{ marginTop: 12 }}>
+              No location to show — set the device's lat/lng (brightness card)
+              or enter an override above.
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end', gap: 8 }}>
+        <button
+          disabled={busy}
+          onClick={() =>
+            action(async () => {
+              const updated = await devicesApi.update(device.id, {
+                weatherPageEnabled: enabled,
+                weatherPageDurationMs: durationMs,
+                weatherPageLocation: locationOverride.trim() || null,
+              } as unknown as Parameters<typeof devicesApi.update>[1]);
+              onUpdated(updated);
+            })
+          }
+        >
+          Save weather page
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => action(() => devicesApi.republishBase(device.id))}
+          title="Re-publish the base program so the change reaches the device immediately."
+        >
+          Apply to device
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1303,6 +1420,13 @@ export default function DeviceDetail() {
           </button>
         </div>
       </div>
+
+      <WeatherPageCard
+        device={device}
+        busy={busy}
+        action={action}
+        onUpdated={(d) => setDevice(d)}
+      />
 
       {aForm && (
         <div className="card">

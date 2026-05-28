@@ -60,6 +60,10 @@ interface DeviceRow {
   dim_max_pct: number;
   last_cloud_cover_pct: number | null;
   last_dim_applied_pct: number | null;
+  // Full-page weather widget
+  weather_page_enabled: boolean;
+  weather_page_duration_ms: number;
+  weather_page_location: string | null;
   // Ownership
   owner_client_id: number | null;
   owner_project_id: number | null;
@@ -141,6 +145,10 @@ const updateSchema = z.object({
   // Overcast dimming
   dimOnOvercastEnabled: z.boolean().optional(),
   dimMaxPct: z.number().int().min(0).max(30).optional(),
+  // Full-page weather widget (NovaStar "Basic Weather" look)
+  weatherPageEnabled: z.boolean().optional(),
+  weatherPageDurationMs: z.number().int().min(3000).max(60000).optional(),
+  weatherPageLocation: z.string().max(120).nullable().optional(),
   // Ownership: who owns this screen (shop-api.clients.id) and which sale
   // job delivered it. Setting owner_client_id triggers the DB trigger
   // that auto-creates an owner_perpetual ad_contracts row.
@@ -340,6 +348,9 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     alerts_severity_min: 'alertsSeverityMin',
     dim_on_overcast_enabled: 'dimOnOvercastEnabled',
     dim_max_pct: 'dimMaxPct',
+    weather_page_enabled: 'weatherPageEnabled',
+    weather_page_duration_ms: 'weatherPageDurationMs',
+    weather_page_location: 'weatherPageLocation',
     owner_client_id: 'ownerClientId',
     owner_project_id: 'ownerProjectId',
   };

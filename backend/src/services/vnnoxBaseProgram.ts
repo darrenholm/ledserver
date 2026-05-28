@@ -88,13 +88,22 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
      * doesn't have to flip anything else.
      */
     alerts_current_text: string | null;
+    /**
+     * Full-page weather widget (migration 022). When true, a WEATHER widget
+     * page is appended to the base rotation — the NovaStar "Basic Weather"
+     * look with sky background, large temperature, condition icon.
+     */
+    weather_page_enabled: boolean;
+    weather_page_duration_ms: number;
+    weather_page_location: string | null;
   }>(
     `SELECT device_key AS sn, provider, base_playlist_id,
             overlay_clock_enabled, overlay_clock_position, overlay_clock_format,
             overlay_weather_enabled, overlay_weather_position, overlay_weather_location,
             overlay_weather_units,
             latitude, longitude,
-            alerts_current_text
+            alerts_current_text,
+            weather_page_enabled, weather_page_duration_ms, weather_page_location
        FROM devices WHERE id = $1`,
     [deviceId],
   );
@@ -150,6 +159,45 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
         layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
       }],
     }];
+  }
+
+  // Full-page weather widget (NovaStar "Basic Weather" look). Appended to
+  // the rotation AFTER customer content so ads play first. Different from
+  // the corner overlay_weather widget — this takes a whole slot and uses
+  // VNNOX's full-screen weather template (sky background, large temp,
+  // condition icon, today's high/low).
+  //
+  // Location precedence: weather_page_location explicit override →
+  // overlay_weather_location (reuse what they already configured) →
+  // device's lat,lng. If none of those resolve, skip the page rather
+  // than push a broken widget.
+  if (d.weather_page_enabled) {
+    const loc =
+      d.weather_page_location?.trim()
+      || d.overlay_weather_location?.trim()
+      || (d.latitude && d.longitude ? `${d.latitude},${d.longitude}` : null);
+    if (loc) {
+      pages.push({
+        name: 'weather-page',
+        widgets: [{
+          type: 'WEATHER',
+          name: 'weather-page-full',
+          location: loc,
+          // Reuse the device's units choice from the overlay config so
+          // °C/°F stays consistent across the corner overlay and this
+          // full page.
+          units: d.overlay_weather_units,
+          unit: d.overlay_weather_units,
+          // VNNOX's "Basic Weather" template style — most installs render
+          // a sky background + large temp + condition icon at this scale.
+          template: 'basic',
+          style: 'basic',
+          duration: d.weather_page_duration_ms,
+          zIndex: 0,
+          layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
+        }],
+      });
+    }
   }
 
   // Layer overlays on every page so they stay visible throughout the loop.

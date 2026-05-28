@@ -68,6 +68,10 @@ export interface Device {
   dim_max_pct: number;
   last_cloud_cover_pct: number | null;
   last_dim_applied_pct: number | null;
+  // Full-page weather widget (slots into base rotation as a whole page)
+  weather_page_enabled: boolean;
+  weather_page_duration_ms: number;
+  weather_page_location: string | null;
   // Ownership: shop-api.clients.id / projects.id (null = Holm-owned)
   owner_client_id: number | null;
   owner_project_id: number | null;

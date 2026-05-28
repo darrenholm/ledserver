@@ -20,6 +20,9 @@ interface BrightnessFormState {
   brightnessDay: number;
   brightnessNight: number;
   brightnessOffsetMinutes: number;
+  // Overcast dim (optional second modulation)
+  dimOnOvercastEnabled: boolean;
+  dimMaxPct: number;
 }
 
 interface RentalFormState {
@@ -133,6 +136,8 @@ function deviceToBrightnessForm(d: Device): BrightnessFormState {
     brightnessDay: d.brightness_day,
     brightnessNight: d.brightness_night,
     brightnessOffsetMinutes: d.brightness_offset_minutes,
+    dimOnOvercastEnabled: d.dim_on_overcast_enabled ?? false,
+    dimMaxPct: d.dim_max_pct ?? 15,
   };
 }
 
@@ -336,6 +341,8 @@ export default function DeviceDetail() {
         brightnessDay: bForm.brightnessDay,
         brightnessNight: bForm.brightnessNight,
         brightnessOffsetMinutes: bForm.brightnessOffsetMinutes,
+        dimOnOvercastEnabled: bForm.dimOnOvercastEnabled,
+        dimMaxPct: bForm.dimMaxPct,
       } as any);
       setDevice(updated);
       setBForm(deviceToBrightnessForm(updated));
@@ -665,6 +672,67 @@ export default function DeviceDetail() {
           ) : (
             <div className="muted" style={{ fontSize: 13 }}>
               Enter latitude and longitude to preview today's transitions.
+            </div>
+          )}
+        </div>
+
+        {/* --- Overcast dimming sub-panel ------------------------------ */}
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            border: '1px dashed var(--border)',
+            borderRadius: 6,
+          }}
+        >
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              id="dim-overcast"
+              checked={bForm.dimOnOvercastEnabled}
+              onChange={(e) => setBForm({ ...bForm, dimOnOvercastEnabled: e.target.checked })}
+              disabled={!bForm.autoBrightnessEnabled}
+            />
+            <label htmlFor="dim-overcast" style={{ marginBottom: 0 }}>
+              Dim further on overcast days
+            </label>
+          </div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            On top of the day/night schedule above, reduce daytime brightness
+            proportionally to current cloud cover (Open-Meteo). Subtle by default —
+            full overcast = the percentage below; clear skies = no reduction.
+            Night brightness is never modified.
+          </div>
+
+          {bForm.dimOnOvercastEnabled && bForm.autoBrightnessEnabled && (
+            <div style={{ marginTop: 10, maxWidth: 360 }}>
+              <label>Maximum reduction at 100% cloud cover</label>
+              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={bForm.dimMaxPct}
+                  onChange={(e) => setBForm({ ...bForm, dimMaxPct: parseInt(e.target.value, 10) })}
+                  style={{ flex: 1 }}
+                />
+                <strong style={{ minWidth: 48, textAlign: 'right' }}>{bForm.dimMaxPct}%</strong>
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                E.g. day brightness {bForm.brightnessDay}% with 60% cloud cover and
+                max {bForm.dimMaxPct}% reduction → {Math.max(1, Math.round(bForm.brightnessDay * (1 - (0.6 * bForm.dimMaxPct) / 100)))}%.
+              </div>
+            </div>
+          )}
+
+          {device.last_cloud_cover_pct != null && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+              Last reading: {device.last_cloud_cover_pct}% cloud cover
+              {device.last_dim_applied_pct != null && device.last_dim_applied_pct > 0
+                ? ` → ${device.last_dim_applied_pct}% reduction applied`
+                : ' → no reduction needed'}
+              .
             </div>
           )}
         </div>

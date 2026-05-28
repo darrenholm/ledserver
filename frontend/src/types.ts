@@ -63,6 +63,11 @@ export interface Device {
   alerts_current_id: string | null;
   alerts_current_text: string | null;
   alerts_last_polled_at: string | null;
+  // Overcast dimming (modulates day brightness by current cloud cover)
+  dim_on_overcast_enabled: boolean;
+  dim_max_pct: number;
+  last_cloud_cover_pct: number | null;
+  last_dim_applied_pct: number | null;
   // Ownership: shop-api.clients.id / projects.id (null = Holm-owned)
   owner_client_id: number | null;
   owner_project_id: number | null;

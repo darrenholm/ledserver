@@ -3,6 +3,7 @@ import { coexRegistry } from '../coex/registry';
 import { CoexError } from '../coex/types';
 import { isDayBrightness, sunEventsFor } from './sun';
 import { writeLog } from './logs';
+import { getCloudCoverPct } from './cloudCoverClient';
 
 interface SchedulableDevice {
   id: string;
@@ -18,6 +19,8 @@ interface SchedulableDevice {
   brightness_offset_minutes: number;
   last_applied_brightness: number | null;
   last_applied_at: string | null;
+  dim_on_overcast_enabled: boolean;
+  dim_max_pct: number;
 }
 
 const TICK_INTERVAL_MS = 60 * 1000; // 1 minute
@@ -35,7 +38,8 @@ export async function tick(now: Date = new Date()): Promise<void> {
   const { rows } = await query<SchedulableDevice>(
     `SELECT id, organization_id, provider, device_key, ip_address, port,
             latitude, longitude, brightness_day, brightness_night,
-            brightness_offset_minutes, last_applied_brightness, last_applied_at
+            brightness_offset_minutes, last_applied_brightness, last_applied_at,
+            dim_on_overcast_enabled, dim_max_pct
        FROM devices
       WHERE auto_brightness_enabled = TRUE
         AND latitude IS NOT NULL
@@ -48,7 +52,48 @@ export async function tick(now: Date = new Date()): Promise<void> {
       const lng = parseFloat(d.longitude as string);
       const { sunrise, sunset } = sunEventsFor(lat, lng, now);
       const isDay = isDayBrightness(sunrise, sunset, d.brightness_offset_minutes, now);
-      const target = isDay ? d.brightness_day : d.brightness_night;
+      const scheduled = isDay ? d.brightness_day : d.brightness_night;
+
+      // Overcast modulation: only during the day (night brightness is
+      // already low; reducing it further hurts visibility for no reason
+      // since cloud cover doesn't matter when the sun isn't up) and only
+      // if the device has opted in.
+      let target = scheduled;
+      let cloudPct: number | null = null;
+      let dimAppliedPct = 0;
+      if (isDay && d.dim_on_overcast_enabled && d.dim_max_pct > 0) {
+        try {
+          cloudPct = await getCloudCoverPct(lat, lng);
+          // reduction_pct = (cloud_cover/100) * dim_max_pct
+          dimAppliedPct = Math.round((cloudPct / 100) * d.dim_max_pct);
+          target = Math.max(1, Math.round(scheduled * (1 - dimAppliedPct / 100)));
+        } catch (err) {
+          // Weather lookup failed — don't dim. Log once per hour per device
+          // so we don't spam logs during an Open-Meteo outage.
+          const lastAt = d.last_applied_at ? new Date(d.last_applied_at).getTime() : 0;
+          if (now.getTime() - lastAt > 60 * 60 * 1000) {
+            await writeLog(
+              'warn',
+              'system',
+              `overcast-dim skipped (weather lookup failed): ${(err as Error).message}`,
+              d.id,
+              undefined,
+              d.organization_id,
+            );
+          }
+        }
+      }
+
+      // Persist diagnostic data even when target didn't change — admin
+      // can see "currently 47% cloud cover, no reduction needed" without
+      // waiting for a brightness write.
+      await query(
+        `UPDATE devices
+            SET last_cloud_cover_pct = $1,
+                last_dim_applied_pct = $2
+          WHERE id = $3`,
+        [cloudPct, dimAppliedPct, d.id],
+      );
 
       // Skip if we already applied this value AND it was within the last 12 hours.
       // (12h ensures we re-affirm at least once each day — useful if the device rebooted.)
@@ -76,9 +121,12 @@ export async function tick(now: Date = new Date()): Promise<void> {
       await writeLog(
         'info',
         'system',
-        `auto-brightness: ${isDay ? 'day' : 'night'} ${target}% applied`,
+        `auto-brightness: ${isDay ? 'day' : 'night'} ${target}% applied` +
+          (dimAppliedPct > 0
+            ? ` (overcast dim ${dimAppliedPct}% off scheduled ${scheduled}%, cloud_cover=${cloudPct}%)`
+            : ''),
         d.id,
-        { sunrise: sunrise.toISOString(), sunset: sunset.toISOString() },
+        { sunrise: sunrise.toISOString(), sunset: sunset.toISOString(), cloudPct, dimAppliedPct },
         d.organization_id,
       );
     } catch (err) {

@@ -55,6 +55,11 @@ interface DeviceRow {
   alerts_current_id: string | null;
   alerts_current_text: string | null;
   alerts_last_polled_at: string | null;
+  // Overcast dimming
+  dim_on_overcast_enabled: boolean;
+  dim_max_pct: number;
+  last_cloud_cover_pct: number | null;
+  last_dim_applied_pct: number | null;
   // Ownership
   owner_client_id: number | null;
   owner_project_id: number | null;
@@ -133,6 +138,9 @@ const updateSchema = z.object({
   // Public-safety / weather alerts overlay
   alertsEnabled: z.boolean().optional(),
   alertsSeverityMin: z.enum(['minor','moderate','severe','extreme']).optional(),
+  // Overcast dimming
+  dimOnOvercastEnabled: z.boolean().optional(),
+  dimMaxPct: z.number().int().min(0).max(30).optional(),
   // Ownership: who owns this screen (shop-api.clients.id) and which sale
   // job delivered it. Setting owner_client_id triggers the DB trigger
   // that auto-creates an owner_perpetual ad_contracts row.
@@ -330,6 +338,8 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     overlay_weather_units: 'overlayWeatherUnits',
     alerts_enabled: 'alertsEnabled',
     alerts_severity_min: 'alertsSeverityMin',
+    dim_on_overcast_enabled: 'dimOnOvercastEnabled',
+    dim_max_pct: 'dimMaxPct',
     owner_client_id: 'ownerClientId',
     owner_project_id: 'ownerProjectId',
   };

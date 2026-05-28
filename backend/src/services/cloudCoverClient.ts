@@ -90,7 +90,13 @@ interface WeatherSnapshot {
   /** "Sunny", "Mostly cloudy", "Rain", etc. — derived from WMO weather code. */
   conditionLabel: string;
   /** Bucket → emoji glyph for the UI mock. Real device uses VNNOX's icon. */
-  conditionGlyph: '☀' | '⛅' | '☁' | '🌧' | '⛈' | '❄' | '🌫';
+  conditionGlyph: '☀' | '⛅' | '☁' | '🌧' | '⛈' | '❄' | '🌫' | '🌙';
+  /**
+   * True if it's currently daylight at the device's location. Drives the
+   * preview background (bright sky vs. dark sky) so the mock matches
+   * VNNOX's native renderer which dims to a night palette after sunset.
+   */
+  isDay: boolean;
   highC: number | null;
   lowC: number | null;
 }
@@ -129,10 +135,11 @@ export async function getCurrentWeather(
     return cached.snap;
   }
 
-  // One round-trip for current temp + weather code + today's hi/lo.
+  // One round-trip for current temp + weather code + is_day flag +
+  // today's hi/lo.
   const url =
     `${BASE_URL}?latitude=${lat}&longitude=${lng}` +
-    `&current=temperature_2m,weather_code` +
+    `&current=temperature_2m,weather_code,is_day` +
     `&daily=temperature_2m_max,temperature_2m_min` +
     `&forecast_days=1&timezone=auto`;
   const controller = new AbortController();
@@ -144,7 +151,7 @@ export async function getCurrentWeather(
     });
     if (!res.ok) throw new Error(`open-meteo wx ${res.status}: ${await res.text()}`);
     const data = (await res.json()) as {
-      current?: { temperature_2m?: number; weather_code?: number };
+      current?: { temperature_2m?: number; weather_code?: number; is_day?: number };
       daily?: { temperature_2m_max?: number[]; temperature_2m_min?: number[] };
     };
     const tempC = data.current?.temperature_2m;
@@ -152,12 +159,17 @@ export async function getCurrentWeather(
     if (typeof tempC !== 'number' || typeof code !== 'number') {
       throw new Error(`open-meteo wx missing current fields: ${JSON.stringify(data).slice(0, 200)}`);
     }
+    const isDay = data.current?.is_day === 1;
     const desc = describeWmoCode(code);
+    // At night with clear/mostly-clear skies, swap the sun glyph for a moon
+    // — matches the night palette used by the UI preview.
+    const glyph = !isDay && (code === 0 || code === 1) ? '🌙' : desc.glyph;
     const snap: WeatherSnapshot = {
       temperatureC: Math.round(tempC * 10) / 10,
       weatherCode: code,
       conditionLabel: desc.label,
-      conditionGlyph: desc.glyph,
+      conditionGlyph: glyph,
+      isDay,
       highC: typeof data.daily?.temperature_2m_max?.[0] === 'number'
         ? Math.round(data.daily.temperature_2m_max[0])
         : null,

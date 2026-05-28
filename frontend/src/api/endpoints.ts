@@ -107,6 +107,7 @@ export const devices = {
       weatherCode: number;
       conditionLabel: string;
       conditionGlyph: string;
+      isDay: boolean;
       highC: number | null;
       lowC: number | null;
     }>(`/devices/${id}/weather-preview${q}`);

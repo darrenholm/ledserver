@@ -147,6 +147,237 @@ function formatTime(d: Date | null): string {
 }
 
 /**
+ * Bucket a WMO weather code into a coarse "scene" so we can pick the
+ * right background gradient + overlay style. Mirrors the categories
+ * VNNOX's renderer animates through.
+ */
+type Scene = 'clear' | 'partlyCloudy' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm';
+function sceneFor(code: number): Scene {
+  if (code === 0 || code === 1) return 'clear';
+  if (code === 2) return 'partlyCloudy';
+  if (code === 3) return 'cloudy';
+  if (code >= 45 && code <= 48) return 'fog';
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'rain';
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'snow';
+  if (code >= 95) return 'storm';
+  return 'partlyCloudy';
+}
+
+/** CSS gradient for the chosen scene, day vs night. */
+function pickSceneBackground(
+  p: { weatherCode: number; isDay: boolean } | null,
+): string {
+  if (!p) return 'linear-gradient(180deg, #4ea0e0 0%, #6cb8e6 60%, #8ec9eb 100%)';
+  const scene = sceneFor(p.weatherCode);
+  // Night palette — only varies a little by scene because at night you
+  // mostly see "dark with stars" or "dark with cloud cover."
+  if (!p.isDay) {
+    if (scene === 'storm') return 'linear-gradient(180deg, #0b1220 0%, #1a1f3a 100%)';
+    if (scene === 'rain' || scene === 'snow')
+      return 'linear-gradient(180deg, #1e293b 0%, #334155 100%)';
+    if (scene === 'cloudy' || scene === 'fog')
+      return 'linear-gradient(180deg, #1f2937 0%, #475569 100%)';
+    // clear / partlyCloudy night
+    return 'linear-gradient(180deg, #0f172a 0%, #1e3a8a 60%, #1e40af 100%)';
+  }
+  // Day palette
+  switch (scene) {
+    case 'clear':
+      return 'linear-gradient(180deg, #4ea0e0 0%, #6cb8e6 60%, #8ec9eb 100%)';
+    case 'partlyCloudy':
+      return 'linear-gradient(180deg, #6a9bc1 0%, #95b8d2 60%, #b9d0e0 100%)';
+    case 'cloudy':
+      return 'linear-gradient(180deg, #7a8896 0%, #98a4b0 60%, #b3bcc4 100%)';
+    case 'fog':
+      return 'linear-gradient(180deg, #b0bac3 0%, #c9d0d7 60%, #dde3e8 100%)';
+    case 'rain':
+      return 'linear-gradient(180deg, #45556a 0%, #5c6c81 60%, #7d8c9e 100%)';
+    case 'snow':
+      return 'linear-gradient(180deg, #b8c5d3 0%, #cfd9e3 60%, #e5edf3 100%)';
+    case 'storm':
+      return 'linear-gradient(180deg, #2d3344 0%, #424c63 60%, #5f6a82 100%)';
+  }
+}
+
+/** Text colour that stays readable on the chosen background. */
+function pickSceneTextColor(
+  p: { weatherCode: number; isDay: boolean } | null,
+): string {
+  if (!p) return 'white';
+  const scene = sceneFor(p.weatherCode);
+  // Light backgrounds (snow, fog by day) need dark text.
+  if (p.isDay && (scene === 'snow' || scene === 'fog')) return '#1f2937';
+  return 'white';
+}
+
+/**
+ * Visual filler appropriate to the scene. Clouds for cloudy days, rain
+ * streaks for rain, snow dots for snow, stars for clear nights, lightning
+ * for storms. All SVG so it scales with the device aspect ratio.
+ */
+function WeatherSceneOverlay({
+  preview,
+}: {
+  preview: { weatherCode: number; isDay: boolean } | null;
+}) {
+  if (!preview) {
+    // Fallback decoration matching the default sunny background.
+    return <Clouds opacity={0.5} />;
+  }
+  const scene = sceneFor(preview.weatherCode);
+  const night = !preview.isDay;
+
+  // Night sky → stars (clear or partly cloudy only; if it's overcast you
+  // can't see stars, so just dim the cloud silhouettes).
+  if (night && (scene === 'clear' || scene === 'partlyCloudy')) {
+    return (
+      <>
+        <Stars />
+        {scene === 'partlyCloudy' && <Clouds opacity={0.35} dark />}
+      </>
+    );
+  }
+  if (scene === 'rain') {
+    return (
+      <>
+        <Clouds opacity={night ? 0.3 : 0.5} dark />
+        <Rain night={night} />
+      </>
+    );
+  }
+  if (scene === 'snow') {
+    return (
+      <>
+        <Clouds opacity={night ? 0.3 : 0.4} dark={night} />
+        <Snow />
+      </>
+    );
+  }
+  if (scene === 'storm') {
+    return (
+      <>
+        <Clouds opacity={0.4} dark />
+        <Lightning />
+        <Rain night={night} />
+      </>
+    );
+  }
+  if (scene === 'fog') {
+    return <FogBands />;
+  }
+  // clear / partlyCloudy / cloudy day
+  const cloudOpacity = scene === 'clear' ? 0.5 : scene === 'partlyCloudy' ? 0.65 : 0.85;
+  return <Clouds opacity={cloudOpacity} dark={scene === 'cloudy'} />;
+}
+
+function Clouds({ opacity = 0.5, dark = false }: { opacity?: number; dark?: boolean }) {
+  const fill = dark ? '#cbd5e1' : 'white';
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity }}
+    >
+      <ellipse cx="80"  cy="60"  rx="60"  ry="22" fill={fill} />
+      <ellipse cx="180" cy="40"  rx="48"  ry="18" fill={fill} />
+      <ellipse cx="490" cy="80"  rx="80"  ry="26" fill={fill} />
+      <ellipse cx="320" cy="240" rx="100" ry="30" fill={fill} />
+      <ellipse cx="80"  cy="220" rx="60"  ry="22" fill={fill} />
+      <ellipse cx="540" cy="220" rx="55"  ry="20" fill={fill} />
+    </svg>
+  );
+}
+
+function Stars() {
+  // Hand-placed positions so we don't pull in a random RNG just for this.
+  const pts = [
+    [60, 50], [120, 90], [200, 40], [260, 80], [340, 30], [420, 65],
+    [480, 35], [560, 90], [90, 130], [320, 130], [500, 150], [380, 170],
+    [150, 200], [220, 240], [440, 220], [80, 270],
+  ];
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      {pts.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r={(i % 3) + 1.2} fill="white" opacity={0.85} />
+      ))}
+    </svg>
+  );
+}
+
+function Rain({ night }: { night: boolean }) {
+  // Diagonal streaks. CSS animation would be nicer but adds complexity;
+  // static streaks are enough to read as "rain" at a glance.
+  const color = night ? '#94a3b8' : '#cbd5e1';
+  const lines = [];
+  for (let i = 0; i < 28; i++) {
+    const x = (i * 23) % 600;
+    const y = (i * 17) % 280;
+    lines.push(<line key={i} x1={x} y1={y} x2={x - 6} y2={y + 14} stroke={color} strokeWidth={1.5} />);
+  }
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.7 }}
+    >
+      {lines}
+    </svg>
+  );
+}
+
+function Snow() {
+  const flakes = [];
+  for (let i = 0; i < 36; i++) {
+    const x = (i * 31) % 600;
+    const y = (i * 19) % 280;
+    flakes.push(<circle key={i} cx={x} cy={y} r={1.5 + (i % 3) * 0.6} fill="white" opacity={0.85} />);
+  }
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      {flakes}
+    </svg>
+  );
+}
+
+function Lightning() {
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      <polygon
+        points="430,40 405,150 460,150 420,260 510,120 455,120 490,40"
+        fill="#fde047"
+        opacity={0.9}
+      />
+    </svg>
+  );
+}
+
+function FogBands() {
+  return (
+    <svg
+      viewBox="0 0 600 300"
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      <rect x={0} y={80}  width={600} height={18} fill="white" opacity={0.55} />
+      <rect x={0} y={140} width={600} height={14} fill="white" opacity={0.45} />
+      <rect x={0} y={200} width={600} height={16} fill="white" opacity={0.5} />
+    </svg>
+  );
+}
+
+/**
  * Self-contained card for the full-page weather widget. Kept as its own
  * component (rather than inline like the other cards) because it has its
  * own local form state — no point sharing scope with brightness/overlay
@@ -287,8 +518,9 @@ function WeatherPageCard({
       <div style={{ marginTop: 16 }}>
         <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
           Preview — approximates how the page will look on the screen. The
-          device renders this via NovaStar's native widget; styling will
-          differ slightly. Updates live as you change the location.
+          device renders this via NovaStar's native widget; the background
+          shifts with conditions (sunny / cloudy / rainy / night) so this
+          mock should track roughly what's playing on the sign right now.
         </div>
         <div
           style={{
@@ -297,33 +529,20 @@ function WeatherPageCard({
             borderRadius: 8,
             overflow: 'hidden',
             position: 'relative',
-            // Sky-blue gradient + scattered cloud silhouettes via SVG so we
-            // don't depend on any external asset. The real VNNOX template
-            // uses a similar palette.
             background: previewLoading
               ? '#0f172a'
-              : 'linear-gradient(180deg, #4ea0e0 0%, #6cb8e6 60%, #8ec9eb 100%)',
-            color: 'white',
+              : pickSceneBackground(preview),
+            color: pickSceneTextColor(preview),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'background 0.4s ease',
+            transition: 'background 0.6s ease, color 0.4s ease',
             fontFamily: 'system-ui, -apple-system, sans-serif',
           }}
         >
-          {/* Cloud silhouettes */}
-          <svg
-            viewBox="0 0 600 300"
-            preserveAspectRatio="none"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.5 }}
-          >
-            <ellipse cx="80"  cy="60"  rx="60" ry="22" fill="white" />
-            <ellipse cx="180" cy="40"  rx="48" ry="18" fill="white" />
-            <ellipse cx="490" cy="80"  rx="80" ry="26" fill="white" />
-            <ellipse cx="320" cy="240" rx="100" ry="30" fill="white" />
-            <ellipse cx="80"  cy="220" rx="60" ry="22" fill="white" />
-            <ellipse cx="540" cy="220" rx="55" ry="20" fill="white" />
-          </svg>
+          {/* Background overlay matched to scene — clouds by day, stars by
+              night, rain streaks for wet weather, etc. */}
+          <WeatherSceneOverlay preview={preview} />
 
           {previewErr && !preview && (
             <div style={{ position: 'relative', textAlign: 'center', padding: 16, fontSize: 14 }}>

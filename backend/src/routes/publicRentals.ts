@@ -20,6 +20,7 @@ import {
 } from '../services/shopApiClient';
 import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
+import { republishBaseProgram } from '../services/vnnoxBaseProgram';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -1059,6 +1060,155 @@ export async function sendNewRentalNotification(rentalId: string): Promise<void>
     replyTo: r.advertiser_email,
   });
 }
+
+// ---------------------------------------------------------------------------
+// My devices — customer-facing weather page self-serve
+// ---------------------------------------------------------------------------
+//
+// Any client who either OWNS a screen (devices.owner_client_id = their id,
+// via the owner_perpetual contract) or has an active rental on a screen
+// (rentals.project_client_id, OR ad_contracts.client_id) can enable a
+// full-screen weather page on that screen without admin intervention.
+//
+// Scope this tightly:
+//   - Only fields we want customer-controlled: weather_page_enabled,
+//     weather_page_duration_ms, weather_page_location. NOT things like
+//     base_playlist_id or pricing.
+//   - Ownership check on every write — can't blast at someone else's
+//     screen by guessing the device id.
+
+router.get('/my-devices', requireAdvertiser, async (req, res) => {
+  const adv = req.advertiser!;
+  // Devices this client either owns directly or has an active/upcoming
+  // rental (or contract) on. UNION dedupes if both apply.
+  const { rows } = await query<{
+    id: string;
+    name: string;
+    location: string | null;
+    width_px: number | null;
+    height_px: number | null;
+    latitude: string | null;
+    longitude: string | null;
+    overlay_weather_location: string | null;
+    overlay_weather_units: string;
+    weather_page_enabled: boolean;
+    weather_page_duration_ms: number;
+    weather_page_location: string | null;
+    relationship: string;
+  }>(
+    `SELECT d.id, d.name, d.location, d.width_px, d.height_px,
+            d.latitude, d.longitude,
+            d.overlay_weather_location, d.overlay_weather_units,
+            d.weather_page_enabled, d.weather_page_duration_ms,
+            d.weather_page_location,
+            CASE WHEN d.owner_client_id = $1 THEN 'owner' ELSE 'renter' END AS relationship
+       FROM devices d
+      WHERE d.owner_client_id = $1
+         OR d.id IN (
+              SELECT r.device_id FROM rentals r
+               WHERE r.status IN ('approved','active')
+                 AND r.project_client_id = $1
+              UNION
+              SELECT a.device_id FROM ad_contracts a
+               WHERE a.client_id = $1
+                 AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+            )
+      ORDER BY relationship ASC, d.name`,
+    [adv.id],
+  );
+  res.json(rows);
+});
+
+router.patch('/my-devices/:id/weather-page', requireAdvertiser, async (req, res) => {
+  const adv = req.advertiser!;
+  const body = req.body as {
+    enabled?: boolean;
+    durationMs?: number;
+    location?: string | null;
+  };
+
+  // Verify the caller has SOME claim on this device. Same predicate as
+  // the GET above so the UI and the write match.
+  const check = await query<{ id: string }>(
+    `SELECT d.id FROM devices d
+      WHERE d.id = $1
+        AND ( d.owner_client_id = $2
+              OR d.id IN (
+                SELECT r.device_id FROM rentals r
+                 WHERE r.status IN ('approved','active')
+                   AND r.project_client_id = $2
+                UNION
+                SELECT a.device_id FROM ad_contracts a
+                 WHERE a.client_id = $2
+                   AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+              ))`,
+    [req.params.id, adv.id],
+  );
+  if (check.rows.length === 0) {
+    res.status(404).json({ error: 'device not found or not yours' });
+    return;
+  }
+
+  // Validate inputs before touching the DB.
+  if (body.durationMs !== undefined) {
+    if (typeof body.durationMs !== 'number' || body.durationMs < 3000 || body.durationMs > 60000) {
+      res.status(400).json({ error: 'durationMs must be 3000-60000' });
+      return;
+    }
+  }
+  if (body.location !== undefined && body.location !== null) {
+    if (typeof body.location !== 'string' || body.location.length > 120) {
+      res.status(400).json({ error: 'location must be a string ≤120 chars' });
+      return;
+    }
+  }
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+  if (body.enabled !== undefined) {
+    fields.push(`weather_page_enabled = $${i++}`);
+    values.push(body.enabled);
+  }
+  if (body.durationMs !== undefined) {
+    fields.push(`weather_page_duration_ms = $${i++}`);
+    values.push(body.durationMs);
+  }
+  if (body.location !== undefined) {
+    fields.push(`weather_page_location = $${i++}`);
+    values.push(body.location);
+  }
+  if (fields.length === 0) {
+    res.status(400).json({ error: 'no fields to update' });
+    return;
+  }
+  values.push(req.params.id);
+  await query(
+    `UPDATE devices SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${i}`,
+    values,
+  );
+
+  // Push the change to the device immediately. Failures don't roll back
+  // the DB write — admin (and the customer) can hit Republish later if
+  // VNNOX is flaky. Match the pattern used by the artwork swap.
+  let publishError: string | null = null;
+  try {
+    await republishBaseProgram(req.params.id);
+  } catch (err) {
+    publishError = (err as Error).message;
+    // eslint-disable-next-line no-console
+    console.warn('[my-devices/weather-page] publish failed:', publishError);
+  }
+
+  const updated = await query(
+    `SELECT id, name, location, width_px, height_px, latitude, longitude,
+            overlay_weather_location, overlay_weather_units,
+            weather_page_enabled, weather_page_duration_ms, weather_page_location
+       FROM devices WHERE id = $1`,
+    [req.params.id],
+  );
+  res.json({ device: updated.rows[0], publishError });
+});
 
 export { withTx };
 export default router;

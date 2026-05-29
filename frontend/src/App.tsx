@@ -4,6 +4,8 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import AcceptInvite from './pages/AcceptInvite';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import SsoFromShop from './pages/SsoFromShop';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
@@ -54,6 +56,8 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         {/* SSO handoff from holmgraphics.ca jobs board (no LED login required). */}
         <Route path="/sso" element={<SsoFromShop />} />
 

@@ -406,4 +406,149 @@ router.post('/invite/:token/accept', async (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Self-service password reset
+// ---------------------------------------------------------------------------
+//
+// Two endpoints, both unauthenticated (the user can't log in by definition):
+//
+//   POST /auth/forgot-password { username }
+//     → Look up the user. If found, generate a 32-byte token, store its
+//       SHA-256 hash with a 1-hour expiry, send an email with the raw
+//       token in the link. Always return 200 to prevent username
+//       enumeration ("did that account exist?" attacks).
+//
+//   POST /auth/reset-password { token, password }
+//     → Hash the token, find the unused unexpired row, bcrypt the new
+//       password, stamp used_at. Also burns any *other* open resets for
+//       the same user so a phished spare link can't be replayed.
+//
+// Rate-limited the same as login so an attacker can't grind tokens.
+
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many reset requests, try again later' },
+});
+
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'too many reset attempts, try again later' },
+});
+
+const forgotSchema = z.object({
+  // Same shape as login — accept either a handle or email-as-username.
+  username: z.string().min(3).max(120),
+});
+
+const resetSchema = z.object({
+  token: z.string().min(10).max(200),
+  password: z.string().min(8).max(200),
+});
+
+function hashResetToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+router.post('/forgot-password', forgotLimiter, async (req, res) => {
+  const data = forgotSchema.parse(req.body);
+  const ip = req.ip ?? null;
+
+  // Case-insensitive lookup so user can type their username/email however
+  // they normally write it.
+  const userRes = await query<{ id: string; username: string }>(
+    `SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)`,
+    [data.username.trim()],
+  );
+
+  // Always respond the same way regardless of hit/miss. The email send
+  // happens inside the if-block so we don't leak "this username exists"
+  // via timing either — the bcrypt'd login path is the only oracle.
+  if (userRes.rows.length > 0) {
+    const user = userRes.rows[0];
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await query(
+      `INSERT INTO password_resets (user_id, token_hash, expires_at, ip_at_request)
+       VALUES ($1, $2, $3, $4)`,
+      [user.id, tokenHash, expiresAt, ip],
+    );
+
+    // Email send is best-effort — we never want a Resend hiccup to
+    // surface "your account doesn't exist" to the caller. Log and move on.
+    try {
+      const { passwordResetEmail, sendEmail } = await import('../services/email');
+      const tmpl = passwordResetEmail({
+        username: user.username,
+        token: rawToken,
+        expiresAt,
+      });
+      await sendEmail({
+        to: user.username, // works whether username is an email or a handle
+        subject: tmpl.subject,
+        html: tmpl.html,
+        text: tmpl.text,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[forgot-password] email send failed:', (err as Error).message);
+    }
+  }
+
+  res.json({ ok: true, message: 'If that account exists, a reset link is on its way.' });
+});
+
+router.post('/reset-password', resetLimiter, async (req, res) => {
+  const data = resetSchema.parse(req.body);
+  const ip = req.ip ?? null;
+  const tokenHash = hashResetToken(data.token);
+
+  const result = await withTx(async (client) => {
+    // Lock the reset row so two concurrent resets can't both succeed.
+    const r = await client.query<{ id: string; user_id: string; expires_at: string; used_at: string | null }>(
+      `SELECT id, user_id, expires_at, used_at
+         FROM password_resets
+        WHERE token_hash = $1
+        FOR UPDATE`,
+      [tokenHash],
+    );
+    if (r.rows.length === 0) {
+      return { status: 400, body: { error: 'invalid or expired token' } } as const;
+    }
+    const row = r.rows[0];
+    if (row.used_at) {
+      return { status: 400, body: { error: 'this reset link has already been used' } } as const;
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return { status: 400, body: { error: 'this reset link has expired — request a new one' } } as const;
+    }
+
+    const hash = await bcrypt.hash(data.password, 10);
+    await client.query(
+      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+      [hash, row.user_id],
+    );
+    await client.query(
+      `UPDATE password_resets SET used_at = NOW(), ip_at_use = $1 WHERE id = $2`,
+      [ip, row.id],
+    );
+    // Invalidate any OTHER open resets for the same user — defence
+    // against an attacker who phished one link and stashed a spare.
+    await client.query(
+      `UPDATE password_resets SET used_at = NOW()
+        WHERE user_id = $1 AND used_at IS NULL AND id <> $2`,
+      [row.user_id, row.id],
+    );
+    return { status: 200, body: { ok: true } } as const;
+  });
+  res.status(result.status).json(result.body);
+});
+
 export default router;

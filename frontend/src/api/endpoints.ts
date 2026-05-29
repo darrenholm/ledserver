@@ -40,6 +40,15 @@ export const auth = {
    */
   ssoFromShop: (shopToken: string) =>
     api<LoginResponse>('/auth/sso-from-shop', { body: { shopToken } }),
+  /**
+   * Self-service password reset. Always returns 200 — even if the username
+   * is unknown — so a caller can't enumerate accounts.
+   */
+  forgotPassword: (username: string) =>
+    api<{ ok: boolean; message: string }>('/auth/forgot-password', { body: { username } }),
+  /** Consume a reset token + set the new password. One-shot. */
+  resetPassword: (token: string, password: string) =>
+    api<{ ok: boolean }>('/auth/reset-password', { body: { token, password } }),
 };
 
 export const users = {

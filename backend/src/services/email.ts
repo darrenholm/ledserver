@@ -216,6 +216,42 @@ Link expires ${expiresStr}.`;
   };
 }
 
+interface PasswordResetArgs {
+  username: string;
+  token: string;
+  expiresAt: Date;
+}
+
+/**
+ * Self-service password reset email. Mirrors the invite email's shape
+ * (single CTA + short explainer) so the same Resend domain/headers
+ * carry it through. The link contains the raw token; only its hash is
+ * stored in the DB.
+ */
+export function passwordResetEmail(args: PasswordResetArgs): { subject: string; html: string; text: string } {
+  const resetUrl = `${config.publicBaseUrl}/reset-password?token=${encodeURIComponent(args.token)}`;
+  const expiresStr = args.expiresAt.toLocaleString('en-CA', { dateStyle: 'long', timeStyle: 'short' });
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#111;line-height:1.4">
+      <h2>Reset your LED Server password</h2>
+      <p>Someone (hopefully you) asked to reset the password for <strong>${escapeHtml(args.username)}</strong>.</p>
+      <p style="margin:24px 0">
+        <a href="${resetUrl}" style="display:inline-block;padding:10px 18px;background:#2563eb;color:white;border-radius:6px;text-decoration:none">Choose a new password</a>
+      </p>
+      <p style="font-size:13px;color:#666">This link expires on ${escapeHtml(expiresStr)} and can only be used once. If you didn't ask for this, you can ignore the email — your password stays the same.</p>
+    </div>
+  `;
+  const text = `Reset your LED Server password for ${args.username}.
+Choose a new password: ${resetUrl}
+Link expires ${expiresStr} and can only be used once.
+If you didn't request this, ignore the email — your password stays the same.`;
+  return {
+    subject: 'Reset your LED Server password',
+    html,
+    text,
+  };
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

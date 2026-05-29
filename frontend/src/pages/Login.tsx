@@ -50,6 +50,9 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <div style={{ textAlign: 'right', marginTop: 4 }}>
+              <Link to="/forgot-password" style={{ fontSize: 12 }}>Forgot password?</Link>
+            </div>
           </div>
           {error && <div className="error-banner">{error}</div>}
           <button type="submit" disabled={busy}>

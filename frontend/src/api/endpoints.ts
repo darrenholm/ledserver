@@ -139,6 +139,20 @@ export const media = {
     return api<Media>('/media', { formData: fd });
   },
   remove: (id: string) => api<void>(`/media/${id}`, { method: 'DELETE' }),
+  /**
+   * Compose a text slide and insert as a new media row. Same renderer
+   * the customer rental booking uses, so what admin makes here is
+   * pixel-identical to what a customer would.
+   */
+  createTextSlide: (data: {
+    text: string;
+    textColor: string;
+    bgColor: string;
+    fontFamily?: 'sans' | 'sans-bold' | 'serif';
+    widthPx?: number;
+    heightPx?: number;
+    name?: string;
+  }) => api<Media>('/media/text-slide', { body: data }),
   backfillThumbnails: () =>
     api<{ candidates: number; generated: number; skipped: number; errors: { id: string; message: string }[] }>(
       '/media/backfill-thumbnails',

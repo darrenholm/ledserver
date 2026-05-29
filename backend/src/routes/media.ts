@@ -9,6 +9,7 @@ import { query } from '../db';
 import { authRequired, requireOrgRole } from '../middleware/auth';
 import { orgClause, orgForInsert } from '../services/scope';
 import { config } from '../config';
+import { buildTextSlideSvg, textSlideSchema } from '../services/textSlide';
 
 const router = Router();
 router.use(authRequired);
@@ -240,6 +241,91 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('fil
       // eslint-disable-next-line no-console
       console.error(`[media] thumbnail generation failed for ${media.id}:`, err);
     }
+  }
+  res.status(201).json(media);
+});
+
+/**
+ * Compose a text slide and store it as a media row. Same renderer the
+ * customer-facing rental booking uses (services/textSlide.ts), so the
+ * output is pixel-identical regardless of who creates it.
+ *
+ * Width/height default to 1920×1080 — a sensible "generic landscape"
+ * canvas that resamples cleanly onto most LED panels. Admin can override
+ * to match a specific screen (e.g. 240×120 ticker, 1024×1024 square)
+ * by passing widthPx/heightPx.
+ */
+const textSlideBodySchema = textSlideSchema.extend({
+  widthPx: z.number().int().min(64).max(7680).default(1920),
+  heightPx: z.number().int().min(64).max(7680).default(1080),
+  /** Optional display name; defaults to a snippet of the text. */
+  name: z.string().max(160).optional(),
+});
+
+router.post('/text-slide', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const data = textSlideBodySchema.parse(req.body);
+  const orgId = await orgForInsert(req);
+
+  const svg = buildTextSlideSvg({
+    text: data.text,
+    textColor: data.textColor,
+    bgColor: data.bgColor,
+    fontFamily: data.fontFamily,
+    widthPx: data.widthPx,
+    heightPx: data.heightPx,
+  });
+  const id = crypto.randomUUID();
+  const filename = `${id}.png`;
+  const destPath = path.join(MEDIA_DIR, filename);
+  await sharp(Buffer.from(svg)).png().toFile(destPath);
+  const stat = await fs.promises.stat(destPath);
+  const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${filename}`;
+
+  // Use a readable original_name so this row shows up legibly in the
+  // media table — first 40 chars of the headline + .png.
+  const snippet = (data.name || data.text).replace(/\s+/g, ' ').trim().slice(0, 40);
+  const originalName = `${snippet || 'text-slide'}.png`;
+
+  const { rows } = await query<MediaRow>(
+    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes,
+                        width_px, height_px, storage_url, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+     RETURNING *`,
+    [
+      orgId,
+      filename,
+      originalName,
+      'image/png',
+      stat.size,
+      data.widthPx,
+      data.heightPx,
+      publicUrl,
+      JSON.stringify({
+        source: 'text-slide',
+        text: data.text,
+        textColor: data.textColor,
+        bgColor: data.bgColor,
+        fontFamily: data.fontFamily,
+      }),
+    ],
+  );
+  const media = rows[0];
+
+  // Generate a thumbnail using the same path the upload route uses, so
+  // text slides show up in playlists/contracts with previews like any
+  // other media. Wrapped in try/catch since a thumb failure shouldn't
+  // throw away a successful slide.
+  try {
+    const thumbnailUrl = await generateThumbnail(destPath, media.id);
+    const updated = await query<MediaRow>(
+      `UPDATE media SET thumbnail_url = $1 WHERE id = $2 RETURNING *`,
+      [thumbnailUrl, media.id],
+    );
+    res.status(201).json(updated.rows[0]);
+    return;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[media/text-slide] thumbnail generation failed for ${media.id}:`, err);
   }
   res.status(201).json(media);
 });

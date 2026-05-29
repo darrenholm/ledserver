@@ -26,6 +26,8 @@ export default function MediaPage() {
   const [dupesOpen, setDupesOpen] = useState(false);
   const [dupesLoading, setDupesLoading] = useState(false);
 
+  const [textSlideOpen, setTextSlideOpen] = useState(false);
+
   const refresh = () =>
     mediaApi
       .list()
@@ -127,6 +129,11 @@ export default function MediaPage() {
               {backfilling ? 'Generating…' : `Generate ${missingThumbs} missing thumbnail${missingThumbs === 1 ? '' : 's'}`}
             </button>
           )}
+          {isAdmin && (
+            <button className="secondary" onClick={() => setTextSlideOpen(true)}>
+              + Add text slide
+            </button>
+          )}
           <label className="row" style={{ cursor: 'pointer' }}>
             <input type="file" accept="image/*,video/*,audio/*" onChange={onUpload} hidden />
             <span
@@ -183,6 +190,234 @@ export default function MediaPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {textSlideOpen && (
+        <TextSlideModal
+          onClose={() => setTextSlideOpen(false)}
+          onCreated={(m) => {
+            setItems((prev) => [m, ...prev]);
+            setTextSlideOpen(false);
+            setInfo(`Text slide "${m.original_name}" created.`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compose a text slide and add it to the media library. Same renderer as
+ * the customer-facing rental booking form — see services/textSlide.ts on
+ * the backend. Picker covers the common cases (default landscape, square,
+ * highway-ticker portrait) and a Custom mode for unusual screen sizes.
+ */
+function TextSlideModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (m: Media) => void;
+}) {
+  const [text, setText] = useState('');
+  const [textColor, setTextColor] = useState('#ffffff');
+  const [bgColor, setBgColor] = useState('#1e3a8a');
+  const [fontFamily, setFontFamily] = useState<'sans' | 'sans-bold' | 'serif'>('sans-bold');
+  // Common screen aspects + sizes. Picker chips below; admin can override.
+  type Preset = { label: string; w: number; h: number };
+  const presets: Preset[] = [
+    { label: '1920×1080 (16:9)',  w: 1920, h: 1080 },
+    { label: '1280×720 (16:9)',   w: 1280, h: 720 },
+    { label: '1024×1024 (square)',w: 1024, h: 1024 },
+    { label: '1920×360 (ticker)', w: 1920, h: 360 },
+    { label: '480×240 (small)',   w: 480,  h: 240 },
+  ];
+  const [presetIdx, setPresetIdx] = useState(0);
+  const [customW, setCustomW] = useState(1920);
+  const [customH, setCustomH] = useState(1080);
+  const [useCustom, setUseCustom] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const widthPx = useCustom ? customW : presets[presetIdx].w;
+  const heightPx = useCustom ? customH : presets[presetIdx].h;
+
+  // Roughly mirror the backend's sizing math so the preview tracks what
+  // the rendered PNG will look like.
+  const previewFontPx = Math.max(
+    heightPx / 8,
+    Math.min(heightPx * 0.65, (widthPx * 0.85) / Math.max(1, text.length * 0.55)),
+  );
+  // Scale the preview down to fit a 480-wide modal panel.
+  const previewScale = Math.min(1, 480 / widthPx);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const m = await mediaApi.createTextSlide({
+        text: text.trim(),
+        textColor,
+        bgColor,
+        fontFamily,
+        widthPx,
+        heightPx,
+      });
+      onCreated(m);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        zIndex: 200,
+        padding: 32,
+        overflowY: 'auto',
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="card"
+        style={{ maxWidth: 560, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="row between" style={{ marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>Add text slide</h3>
+          <button className="secondary" onClick={onClose}>Close</button>
+        </div>
+
+        {err && <div className="error-banner" style={{ marginBottom: 12 }}>{err}</div>}
+
+        <label>Headline text</label>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value.slice(0, 120))}
+          placeholder="e.g. SUMMER SALE — 30% OFF"
+          rows={2}
+          style={{ width: '100%' }}
+        />
+        <div className="muted" style={{ fontSize: 12 }}>
+          {text.length}/120 — short, punchy lines work best on a sign.
+        </div>
+
+        <div className="row" style={{ gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+          <div>
+            <label>Text color</label>
+            <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} />
+          </div>
+          <div>
+            <label>Background</label>
+            <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} />
+          </div>
+          <div>
+            <label>Font</label>
+            <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value as 'sans' | 'sans-bold' | 'serif')}>
+              <option value="sans-bold">Sans bold</option>
+              <option value="sans">Sans regular</option>
+              <option value="serif">Serif</option>
+            </select>
+          </div>
+        </div>
+
+        <label style={{ marginTop: 12 }}>Resolution</label>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {presets.map((p, i) => (
+            <button
+              key={p.label}
+              className="secondary"
+              style={{
+                fontSize: 12,
+                opacity: !useCustom && presetIdx === i ? 1 : 0.65,
+                outline: !useCustom && presetIdx === i ? '2px solid var(--accent)' : 'none',
+              }}
+              onClick={() => { setUseCustom(false); setPresetIdx(i); }}
+            >
+              {p.label}
+            </button>
+          ))}
+          <button
+            className="secondary"
+            style={{
+              fontSize: 12,
+              opacity: useCustom ? 1 : 0.65,
+              outline: useCustom ? '2px solid var(--accent)' : 'none',
+            }}
+            onClick={() => setUseCustom(true)}
+          >
+            Custom
+          </button>
+        </div>
+        {useCustom && (
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <div>
+              <label>Width (px)</label>
+              <input
+                type="number"
+                min={64}
+                max={7680}
+                value={customW}
+                onChange={(e) => setCustomW(Math.max(64, Math.min(7680, parseInt(e.target.value, 10) || 0)))}
+              />
+            </div>
+            <div>
+              <label>Height (px)</label>
+              <input
+                type="number"
+                min={64}
+                max={7680}
+                value={customH}
+                onChange={(e) => setCustomH(Math.max(64, Math.min(7680, parseInt(e.target.value, 10) || 0)))}
+              />
+            </div>
+          </div>
+        )}
+
+        <label style={{ marginTop: 16 }}>Preview</label>
+        <div
+          style={{
+            width: widthPx * previewScale,
+            height: heightPx * previewScale,
+            background: bgColor,
+            color: textColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 4,
+            fontFamily:
+              fontFamily === 'serif'
+                ? "Georgia, serif"
+                : "Helvetica, Arial, sans-serif",
+            fontWeight: fontFamily === 'sans-bold' ? 700 : 400,
+            fontSize: previewFontPx * previewScale,
+            textAlign: 'center',
+            padding: '0 4%',
+            overflow: 'hidden',
+            border: '1px solid var(--border)',
+          }}
+        >
+          {text || <span style={{ opacity: 0.5 }}>Your text appears here</span>}
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          Preview at {Math.round(previewScale * 100)}% of native ({widthPx}×{heightPx}).
+          Final PNG will be exact-pixel.
+        </div>
+
+        <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end', gap: 8 }}>
+          <button className="secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button onClick={submit} disabled={busy || !text.trim()}>
+            {busy ? 'Creating…' : 'Create slide'}
+          </button>
+        </div>
       </div>
     </div>
   );

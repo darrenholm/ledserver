@@ -21,6 +21,7 @@ import {
 import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
 import { republishBaseProgram } from '../services/vnnoxBaseProgram';
+import { buildTextSlideSvg, textSlideSchema } from '../services/textSlide';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -526,80 +527,11 @@ router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), a
 // file then flows through the same media+rental pipeline as an upload,
 // so VNNOX publish and the order-page preview work unchanged.
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
-const textArtworkSchema = z.object({
-  text: z.string().min(1).max(120),
-  textColor: z.string().regex(HEX_COLOR, 'expect #RRGGBB'),
-  bgColor:   z.string().regex(HEX_COLOR, 'expect #RRGGBB'),
-  /**
-   * 'sans' / 'sans-bold' / 'serif'. Kept narrow so we can guarantee the
-   * font name resolves to something rasterizable on the Railway box.
-   */
-  fontFamily: z.enum(['sans', 'sans-bold', 'serif']).default('sans-bold'),
-});
-
-/**
- * Escape characters that have special meaning inside SVG text content.
- */
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-/**
- * Build an SVG with the headline horizontally + vertically centred and
- * auto-sized so it fills ~70% of the panel width. sharp rasterises this
- * to PNG at the device's native resolution.
- */
-function buildTextArtworkSvg(args: {
-  text: string;
-  textColor: string;
-  bgColor: string;
-  fontFamily: string;
-  widthPx: number;
-  heightPx: number;
-}): string {
-  const fontMap: Record<string, string> = {
-    'sans':      "Helvetica, Arial, 'DejaVu Sans', sans-serif",
-    'sans-bold': "Helvetica, Arial, 'DejaVu Sans', sans-serif",
-    'serif':     "Georgia, 'DejaVu Serif', serif",
-  };
-  const fontFamily = fontMap[args.fontFamily] || fontMap['sans-bold'];
-  const fontWeight = args.fontFamily === 'sans-bold' ? '700' : '400';
-
-  // Rough text-fitting: pick a font size so the headline spans ~80% of
-  // the panel width assuming an average glyph aspect of 0.55 (works well
-  // for Helvetica/Arial). Clamp between height/8 and height (so a one-
-  // character headline doesn't blow up to silly proportions on a square
-  // panel). The viewer can always upload a real PNG if they want
-  // pixel-perfect control.
-  const targetWidthPx = args.widthPx * 0.85;
-  const fitByWidth = targetWidthPx / Math.max(1, args.text.length * 0.55);
-  const fitByHeight = args.heightPx * 0.65;
-  const fontSize = Math.max(
-    Math.floor(args.heightPx / 8),
-    Math.min(fitByHeight, fitByWidth),
-  );
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     width="${args.widthPx}" height="${args.heightPx}"
-     viewBox="0 0 ${args.widthPx} ${args.heightPx}">
-  <rect width="100%" height="100%" fill="${args.bgColor}"/>
-  <text x="50%" y="50%"
-        font-family="${fontFamily}" font-weight="${fontWeight}"
-        font-size="${Math.round(fontSize)}"
-        fill="${args.textColor}"
-        text-anchor="middle" dominant-baseline="middle">${escapeXml(args.text)}</text>
-</svg>`;
-}
+// textSlideSchema + buildTextSlideSvg moved to services/textSlide.ts so the
+// admin media-library endpoint shares the same renderer.
 
 router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) => {
-  const data = textArtworkSchema.parse(req.body);
+  const data = textSlideSchema.parse(req.body);
 
   const r = await query<{
     rental_id: string;
@@ -647,11 +579,8 @@ router.post('/rentals/:id/text-artwork', optionalAdvertiser, async (req, res) =>
   const widthPx  = rental.width_px  || 1920;
   const heightPx = rental.height_px || 1080;
 
-  const svg = buildTextArtworkSvg({
-    text: data.text,
-    textColor: data.textColor,
-    bgColor: data.bgColor,
-    fontFamily: data.fontFamily,
+  const svg = buildTextSlideSvg({
+    ...data,
     widthPx,
     heightPx,
   });

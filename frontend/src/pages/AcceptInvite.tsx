@@ -24,9 +24,36 @@ export default function AcceptInvite() {
     }
     authApi
       .lookupInvite(token)
-      .then(setInvite)
+      .then((inv) => {
+        setInvite(inv);
+        // Pre-fill the username with a sensible guess from the email.
+        //   laura.oliver@ugdsb.on.ca → laura.oliver
+        //   travis@holmgraphics.ca   → travis
+        // Saves the user from typing and steers them clear of the
+        // "I put a space in it" trap that bit our last invitee.
+        const local = (inv.email || '').split('@')[0] || '';
+        const cleaned = local.replace(/[^a-zA-Z0-9._-]/g, '');
+        if (cleaned.length >= 3) setUsername(cleaned);
+      })
       .catch((e) => setLookupError((e as Error).message));
   }, [token]);
+
+  /**
+   * Inline username validation. Mirrors the regex on the input + backend
+   * but surfaces a specific message instead of the generic browser
+   * "Please match the requested format" or the API's "validation" string.
+   * Empty username returns null so the form's required attribute handles
+   * the "did you type anything" case.
+   */
+  const usernameProblem = (() => {
+    if (!username) return null;
+    if (username.length < 3) return 'Username needs at least 3 characters.';
+    if (username.length > 60) return 'Username is too long (60 chars max).';
+    if (/\s/.test(username)) return 'No spaces — try a dot, dash, or underscore instead (e.g. laura.oliver).';
+    if (!/^[a-zA-Z0-9._-]+$/.test(username))
+      return 'Only letters, numbers, dot, dash, and underscore are allowed.';
+    return null;
+  })();
 
   // Already signed in? Skip — they're somebody else's account; better to log out first.
   if (user) return <Navigate to="/" replace />;
@@ -79,14 +106,28 @@ export default function AcceptInvite() {
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="janedoe"
+                  placeholder="laura.oliver"
                   required
                   minLength={3}
                   maxLength={60}
                   pattern="[a-zA-Z0-9._-]+"
                   title="Letters, numbers, dot, underscore, or dash"
                   autoFocus
+                  style={
+                    usernameProblem
+                      ? { borderColor: 'var(--red, #dc2626)' }
+                      : undefined
+                  }
                 />
+                {usernameProblem ? (
+                  <div style={{ color: 'var(--red, #dc2626)', fontSize: 12, marginTop: 4 }}>
+                    {usernameProblem}
+                  </div>
+                ) : (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                    Letters, numbers, dot, dash, or underscore. No spaces.
+                  </div>
+                )}
               </div>
               <div>
                 <label>Password</label>
@@ -102,7 +143,7 @@ export default function AcceptInvite() {
                 </div>
               </div>
               {error && <div className="error-banner">{error}</div>}
-              <button type="submit" disabled={busy}>
+              <button type="submit" disabled={busy || !!usernameProblem}>
                 {busy ? 'Creating account…' : 'Accept and sign in'}
               </button>
             </form>

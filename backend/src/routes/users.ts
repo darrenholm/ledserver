@@ -18,11 +18,16 @@ router.use(authRequired);
 
 const ASSIGNABLE_ROLES = ['org_admin', 'org_operator', 'org_viewer'] as const;
 
+// Usernames can be a handle (e.g. 'laura.oliver') or a full email
+// ('laura.oliver@ugdsb.on.ca') — the latter is what most of the existing
+// Holm Graphics accounts use. The character set covers both shapes:
+// letters, digits, dot, dash, underscore, and @. Login is case-sensitive
+// either way.
 const usernameRule = z
   .string()
   .min(3)
   .max(60)
-  .regex(/^[a-zA-Z0-9._-]+$/, 'invalid characters in username');
+  .regex(/^[a-zA-Z0-9._@-]+$/, 'invalid characters in username');
 
 const passwordRule = z.string().min(8).max(200);
 

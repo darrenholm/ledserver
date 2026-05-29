@@ -26,13 +26,11 @@ export default function AcceptInvite() {
       .lookupInvite(token)
       .then((inv) => {
         setInvite(inv);
-        // Pre-fill the username with a sensible guess from the email.
-        //   laura.oliver@ugdsb.on.ca → laura.oliver
-        //   travis@holmgraphics.ca   → travis
-        // Saves the user from typing and steers them clear of the
-        // "I put a space in it" trap that bit our last invitee.
-        const local = (inv.email || '').split('@')[0] || '';
-        const cleaned = local.replace(/[^a-zA-Z0-9._-]/g, '');
+        // Pre-fill the username with the invitee's email. Most Holm
+        // Graphics accounts use the full email as the username
+        // (brady@holmgraphics.ca etc.) so it's the right default. The
+        // user can always edit it to a shorter handle.
+        const cleaned = (inv.email || '').trim().replace(/[^a-zA-Z0-9._@-]/g, '');
         if (cleaned.length >= 3) setUsername(cleaned);
       })
       .catch((e) => setLookupError((e as Error).message));
@@ -49,9 +47,9 @@ export default function AcceptInvite() {
     if (!username) return null;
     if (username.length < 3) return 'Username needs at least 3 characters.';
     if (username.length > 60) return 'Username is too long (60 chars max).';
-    if (/\s/.test(username)) return 'No spaces — try a dot, dash, or underscore instead (e.g. laura.oliver).';
-    if (!/^[a-zA-Z0-9._-]+$/.test(username))
-      return 'Only letters, numbers, dot, dash, and underscore are allowed.';
+    if (/\s/.test(username)) return 'No spaces — use your email, or a handle like laura.oliver.';
+    if (!/^[a-zA-Z0-9._@-]+$/.test(username))
+      return 'Only letters, numbers, dot, dash, underscore, and @ are allowed.';
     return null;
   })();
 
@@ -106,12 +104,12 @@ export default function AcceptInvite() {
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="laura.oliver"
+                  placeholder="laura.oliver@ugdsb.on.ca"
                   required
                   minLength={3}
                   maxLength={60}
-                  pattern="[a-zA-Z0-9._-]+"
-                  title="Letters, numbers, dot, underscore, or dash"
+                  pattern="[a-zA-Z0-9._@-]+"
+                  title="Email address, or a handle like laura.oliver"
                   autoFocus
                   style={
                     usernameProblem
@@ -125,7 +123,7 @@ export default function AcceptInvite() {
                   </div>
                 ) : (
                   <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                    Letters, numbers, dot, dash, or underscore. No spaces.
+                    Your email works, or pick a shorter handle. No spaces.
                   </div>
                 )}
               </div>

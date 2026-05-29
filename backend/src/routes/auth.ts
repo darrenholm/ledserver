@@ -37,7 +37,7 @@ const loginSchema = z.object({
 
 const signupSchema = z.object({
   organizationName: z.string().min(2).max(120),
-  username: z.string().min(3).max(60).regex(/^[a-zA-Z0-9._-]+$/, 'invalid characters in username'),
+  username: z.string().min(3).max(60).regex(/^[a-zA-Z0-9._@-]+$/, 'invalid characters in username'),
   password: z.string().min(8).max(200),
 });
 
@@ -303,7 +303,7 @@ router.post('/signup', signupLimiter, async (req, res) => {
 // ---------- Public invite acceptance ----------
 
 const acceptInviteSchema = z.object({
-  username: z.string().min(3).max(60).regex(/^[a-zA-Z0-9._-]+$/, 'invalid characters in username'),
+  username: z.string().min(3).max(60).regex(/^[a-zA-Z0-9._@-]+$/, 'invalid characters in username'),
   password: z.string().min(8).max(200),
 });
 

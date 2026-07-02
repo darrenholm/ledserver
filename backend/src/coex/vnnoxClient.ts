@@ -395,7 +395,7 @@ function buildMediaWidget(item: PlaylistManifestItem) {
       'PROTOCOL',
     );
   }
-  return {
+  const widget: Record<string, unknown> = {
     type: widgetTypeFor(item.mimeType),
     name: item.mediaId,
     md5: item.checksumMd5,
@@ -407,4 +407,21 @@ function buildMediaWidget(item: PlaylistManifestItem) {
     // rejects raw numbers with "must be Percentage"). Full-screen = 100%.
     layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
   };
+
+  // VIDEO widgets need codec/fps/dimensions/byteRate or the Taurus accepts the
+  // program but shows a frozen first frame (images don't carry these, which is
+  // why images always worked and video never did). NovaStar expects these as
+  // STRINGS. Only emit them when ffprobe actually gave us real metadata —
+  // otherwise fall back to the bare widget (same as legacy behaviour) rather
+  // than send empty/zero fields.
+  if (item.mimeType.startsWith('video/') && item.widthPx && item.heightPx && item.fps && item.codec) {
+    widget.width = String(item.widthPx);
+    widget.height = String(item.heightPx);
+    widget.fps = String(item.fps);
+    widget.codec = item.codec;
+    widget.postfix = (item.url.split('.').pop() || 'mp4').toLowerCase();
+    if (item.byteRateKbps) widget.byteRate = String(item.byteRateKbps);
+  }
+
+  return widget;
 }

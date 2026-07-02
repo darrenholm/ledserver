@@ -33,6 +33,14 @@ export interface PlaylistManifestItem {
   checksumMd5?: string;
   widthPx?: number;
   heightPx?: number;
+  /**
+   * Video-only metadata. VNNOX VIDEO widgets need codec/fps/byteRate to play;
+   * without them the Taurus shows a frozen frame. Populated at deploy time by
+   * ffprobe (services/videoProbe) for video items only. Absent for images.
+   */
+  fps?: number;
+  codec?: string;
+  byteRateKbps?: number;
 }
 
 export interface PlaylistManifest {

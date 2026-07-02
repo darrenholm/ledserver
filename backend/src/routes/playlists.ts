@@ -7,6 +7,7 @@ import { coexRegistry } from '../coex/registry';
 import { writeLog } from '../services/logs';
 import { orgClause, orgForInsert } from '../services/scope';
 import { PlaylistManifest, CoexError } from '../coex/types';
+import { probeVideoFromUrl, VideoMeta } from '../services/videoProbe';
 
 // VNNOX widget payloads need lowercase MD5. We fetch the file from its
 // storage_url (the same URL VNNOX itself will download from) so this
@@ -307,12 +308,31 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
   }
   // VNNOX widget payloads require lowercase MD5. Backfill any media row missing it
   // by fetching from storage_url, then persist so we only ever do this once per row.
+  const videoMeta = new Map<string, VideoMeta>();
   if (first.d_provider === 'vnnox') {
     for (const r of rows) {
-      if (r.checksum_md5) continue;
-      const md5 = await md5FromUrl(r.storage_url);
-      r.checksum_md5 = md5;
-      await query(`UPDATE media SET checksum_md5 = $1 WHERE id = $2`, [md5, r.media_id]);
+      if (!r.checksum_md5) {
+        const md5 = await md5FromUrl(r.storage_url);
+        r.checksum_md5 = md5;
+        await query(`UPDATE media SET checksum_md5 = $1 WHERE id = $2`, [md5, r.media_id]);
+      }
+      // VNNOX VIDEO widgets need codec/fps/dimensions or the Taurus shows a
+      // frozen frame. Probe video items (cached by md5) and persist the pixel
+      // dimensions we learn so the media row is progressively backfilled.
+      if (r.mime_type?.startsWith('video/')) {
+        const meta = await probeVideoFromUrl(r.storage_url, r.checksum_md5 ?? undefined);
+        if (meta) {
+          videoMeta.set(r.media_id, meta);
+          if (!r.media_width_px || !r.media_height_px) {
+            r.media_width_px = meta.widthPx;
+            r.media_height_px = meta.heightPx;
+            await query(
+              `UPDATE media SET width_px = $1, height_px = $2 WHERE id = $3`,
+              [meta.widthPx, meta.heightPx, r.media_id],
+            );
+          }
+        }
+      }
     }
   }
 
@@ -321,17 +341,23 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
     loop: first.pl_loop,
     deviceWidthPx: first.d_width_px ?? undefined,
     deviceHeightPx: first.d_height_px ?? undefined,
-    items: rows.map((r) => ({
-      mediaId: r.media_id,
-      url: r.storage_url,
-      mimeType: r.mime_type,
-      durationMs: r.duration_ms,
-      sizeBytes: Number(r.size_bytes),
-      checksumSha256: r.checksum_sha256 ?? undefined,
-      checksumMd5: r.checksum_md5 ?? undefined,
-      widthPx: r.media_width_px ?? undefined,
-      heightPx: r.media_height_px ?? undefined,
-    })),
+    items: rows.map((r) => {
+      const vm = videoMeta.get(r.media_id);
+      return {
+        mediaId: r.media_id,
+        url: r.storage_url,
+        mimeType: r.mime_type,
+        durationMs: r.duration_ms,
+        sizeBytes: Number(r.size_bytes),
+        checksumSha256: r.checksum_sha256 ?? undefined,
+        checksumMd5: r.checksum_md5 ?? undefined,
+        widthPx: vm?.widthPx ?? r.media_width_px ?? undefined,
+        heightPx: vm?.heightPx ?? r.media_height_px ?? undefined,
+        fps: vm?.fps,
+        codec: vm?.codec,
+        byteRateKbps: vm?.byteRateKbps,
+      };
+    }),
   };
   const client = coexRegistry.get({
     id: deviceId,

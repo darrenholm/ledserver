@@ -26,6 +26,10 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+# ffmpeg/ffprobe: used by services/videoProbe to read codec/fps/dimensions from
+# uploaded videos so VNNOX VIDEO widgets get the metadata the Taurus needs to
+# actually play (not just show a frozen frame).
+RUN apk add --no-cache ffmpeg
 COPY backend/package*.json ./
 RUN npm install --omit=dev
 COPY --from=backend-builder /backend/dist ./dist

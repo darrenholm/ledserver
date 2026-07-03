@@ -12,6 +12,7 @@ import { query } from '../db';
 import { config } from '../config';
 import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
+import { probeVideoFromUrl } from './videoProbe';
 
 type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
@@ -129,9 +130,9 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
         ORDER BY pi.position`,
       [d.base_playlist_id],
     );
-    pages = items.rows.map((it, i) => ({
-      name: `base-page-${i + 1}`,
-      widgets: [{
+    for (let i = 0; i < items.rows.length; i++) {
+      const it = items.rows[i];
+      const widget: Record<string, unknown> = {
         type: widgetTypeFor(it.mime_type),
         name: `base-${it.media_id.slice(0, 8)}`,
         url: it.storage_url,
@@ -140,8 +141,23 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
         duration: it.duration_ms,
         zIndex: 0,
         layout: { x: '0%', y: '0%', width: '100%', height: '100%' },
-      }],
-    }));
+      };
+      // VIDEO widgets need codec/fps/dimensions or the Taurus shows a frozen
+      // frame. Probe (cached by md5) and attach; skip the fields if the probe
+      // fails so we never send empty values.
+      if (it.mime_type.startsWith('video/')) {
+        const meta = await probeVideoFromUrl(it.storage_url, it.checksum_md5 ?? undefined);
+        if (meta) {
+          widget.width = String(meta.widthPx);
+          widget.height = String(meta.heightPx);
+          widget.fps = String(meta.fps);
+          widget.codec = meta.codec;
+          widget.postfix = meta.postfix;
+          if (meta.byteRateKbps) widget.byteRate = String(meta.byteRateKbps);
+        }
+      }
+      pages.push({ name: `base-page-${i + 1}`, widgets: [widget] });
+    }
   }
   if (pages.length === 0) {
     // VNNOX needs at least one page. Use a black placeholder so the program

@@ -15,6 +15,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
+import { probeVideoFromUrl } from './videoProbe';
 
 export interface PublishAdArgs {
   /** Device serial number (VNNOX `sn`). */
@@ -108,7 +109,7 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
   //   'contain' → 'FIT'   (preserve aspect, letterbox)
   const vnnoxScale = args.fitMode === 'cover' ? 'FILL' : 'FIT';
 
-  const widget = {
+  const widget: Record<string, unknown> = {
     type: widgetTypeFor(args.mediaMimeType),
     name: args.name.slice(0, 64),
     url: args.mediaUrl,
@@ -122,6 +123,20 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     scaling: vnnoxScale,
     stretchMode: vnnoxScale,
   };
+
+  // VIDEO widgets need codec/fps/dimensions or the Taurus shows a frozen frame
+  // (images don't). Probe the asset and attach; skip if the probe fails.
+  if (args.mediaMimeType.startsWith('video/')) {
+    const meta = await probeVideoFromUrl(args.mediaUrl, args.mediaMd5 ?? undefined);
+    if (meta) {
+      widget.width = String(meta.widthPx);
+      widget.height = String(meta.heightPx);
+      widget.fps = String(meta.fps);
+      widget.codec = meta.codec;
+      widget.postfix = meta.postfix;
+      if (meta.byteRateKbps) widget.byteRate = String(meta.byteRateKbps);
+    }
+  }
 
   const schedule = {
     startDate: args.startDate,

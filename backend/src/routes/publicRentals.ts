@@ -1147,5 +1147,199 @@ router.patch('/my-devices/:id/weather-page', requireAdvertiser, async (req, res)
   res.json({ device: updated.rows[0], publishError });
 });
 
+// ---------------------------------------------------------------------------
+// My sign — customer-facing slide list (self-serve content management)
+// ---------------------------------------------------------------------------
+//
+// A client who owns or rents a screen manages the ordered list of slides that
+// plays on it, without touching the admin playlist/deploy tooling. Slides are
+// the device's base-program playlist; saving republishes the base program
+// (which re-applies weather/clock/alert overlays automatically).
+
+/** Load a device the caller owns or rents, or null. Same claim predicate as /my-devices. */
+async function loadOwnedDevice(deviceId: string, clientId: number) {
+  const { rows } = await query<{
+    id: string;
+    name: string;
+    organization_id: string;
+    base_playlist_id: string | null;
+  }>(
+    `SELECT d.id, d.name, d.organization_id, d.base_playlist_id
+       FROM devices d
+      WHERE d.id = $1
+        AND ( d.owner_client_id = $2
+              OR d.id IN (
+                SELECT r.device_id FROM rentals r
+                 WHERE r.status IN ('approved','active') AND r.project_client_id = $2
+                UNION
+                SELECT a.device_id FROM ad_contracts a
+                 WHERE a.client_id = $2 AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+              ))`,
+    [deviceId, clientId],
+  );
+  return rows[0] ?? null;
+}
+
+router.get('/my-devices/:id/slides', requireAdvertiser, async (req, res) => {
+  const adv = req.advertiser!;
+  const device = await loadOwnedDevice(req.params.id, adv.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found or not yours' });
+    return;
+  }
+  if (!device.base_playlist_id) {
+    res.json({ deviceName: device.name, slides: [] });
+    return;
+  }
+  const { rows } = await query<{
+    media_id: string;
+    duration_ms: number;
+    original_name: string;
+    mime_type: string;
+    storage_url: string;
+    thumbnail_url: string | null;
+  }>(
+    `SELECT pi.media_id, pi.duration_ms,
+            m.original_name, m.mime_type, m.storage_url, m.thumbnail_url
+       FROM playlist_items pi
+       JOIN media m ON m.id = pi.media_id
+      WHERE pi.playlist_id = $1
+      ORDER BY pi.position`,
+    [device.base_playlist_id],
+  );
+  res.json({
+    deviceName: device.name,
+    slides: rows.map((r) => ({
+      mediaId: r.media_id,
+      name: r.original_name,
+      mimeType: r.mime_type,
+      url: r.storage_url,
+      thumbnailUrl: r.thumbnail_url,
+      durationMs: r.duration_ms,
+    })),
+  });
+});
+
+const slidesSchema = z.object({
+  slides: z
+    .array(
+      z.object({
+        mediaId: z.string().uuid(),
+        durationMs: z.number().int().min(3000).max(60000).optional(),
+      }),
+    )
+    .max(50),
+});
+
+router.put('/my-devices/:id/slides', requireAdvertiser, async (req, res) => {
+  const adv = req.advertiser!;
+  const device = await loadOwnedDevice(req.params.id, adv.id);
+  if (!device) {
+    res.status(404).json({ error: 'device not found or not yours' });
+    return;
+  }
+  const parsed = slidesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'invalid slides' });
+    return;
+  }
+  const { slides } = parsed.data;
+
+  // Every referenced media item must belong to this screen's org — a client
+  // can't point their sign at someone else's media by guessing ids.
+  if (slides.length > 0) {
+    const ids = slides.map((s) => s.mediaId);
+    const { rows: valid } = await query<{ id: string }>(
+      `SELECT id FROM media WHERE id = ANY($1::uuid[]) AND organization_id = $2`,
+      [ids, device.organization_id],
+    );
+    const ok = new Set(valid.map((v) => v.id));
+    const bad = ids.find((id) => !ok.has(id));
+    if (bad) {
+      res.status(400).json({ error: `media ${bad} is not available for this screen` });
+      return;
+    }
+  }
+
+  const playlistId = await withTx(async (client) => {
+    let plId = device.base_playlist_id;
+    if (!plId) {
+      const ins = await client.query<{ id: string }>(
+        `INSERT INTO playlists (organization_id, name, loop) VALUES ($1, $2, TRUE) RETURNING id`,
+        [device.organization_id, `${device.name} content`],
+      );
+      plId = ins.rows[0].id;
+      await client.query(`UPDATE devices SET base_playlist_id = $1 WHERE id = $2`, [plId, device.id]);
+    }
+    await client.query(`DELETE FROM playlist_items WHERE playlist_id = $1`, [plId]);
+    for (let idx = 0; idx < slides.length; idx++) {
+      await client.query(
+        `INSERT INTO playlist_items (playlist_id, media_id, position, duration_ms)
+         VALUES ($1, $2, $3, COALESCE($4, 7000))`,
+        [plId, slides[idx].mediaId, idx, slides[idx].durationMs ?? null],
+      );
+    }
+    return plId;
+  });
+
+  // Push to the sign now. A publish failure doesn't roll back the saved order —
+  // the client's list is stored; VNNOX can be retried. Mirrors weather-page.
+  let publishError: string | null = null;
+  try {
+    await republishBaseProgram(device.id);
+  } catch (err) {
+    publishError = (err as Error).message;
+    // eslint-disable-next-line no-console
+    console.warn('[my-devices/slides] publish failed:', publishError);
+  }
+  res.json({ ok: true, playlistId, publishError });
+});
+
+router.post('/my-devices/:id/slides/upload', requireAdvertiser, upload.single('file'), async (req, res) => {
+  const adv = req.advertiser!;
+  const device = await loadOwnedDevice(req.params.id, adv.id);
+  if (!device) {
+    if (req.file) fs.promises.unlink(req.file.path).catch(() => undefined);
+    res.status(404).json({ error: 'device not found or not yours' });
+    return;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'no file uploaded' });
+    return;
+  }
+  // Normalize video to a Taurus-decodable encoding so the client's upload just
+  // works, then record it against the screen's org.
+  if (req.file.mimetype.startsWith('video/')) {
+    await ensureTaurusSafeVideo(req.file);
+  }
+  const buf = await fs.promises.readFile(req.file.path);
+  const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+  const md5 = crypto.createHash('md5').update(buf).digest('hex');
+  const publicUrl = `${config.mediaPublicBaseUrl}/uploads/${req.file.filename}`;
+  const ins = await query<{ id: string }>(
+    `INSERT INTO media (organization_id, filename, original_name, mime_type, size_bytes,
+                        checksum_sha256, checksum_md5, storage_url, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+     RETURNING id`,
+    [
+      device.organization_id,
+      req.file.filename,
+      req.file.originalname,
+      req.file.mimetype,
+      req.file.size,
+      sha256,
+      md5,
+      publicUrl,
+      JSON.stringify({ source: 'self-serve', deviceId: device.id }),
+    ],
+  );
+  res.status(201).json({
+    mediaId: ins.rows[0].id,
+    name: req.file.originalname,
+    mimeType: req.file.mimetype,
+    url: publicUrl,
+  });
+});
+
 export { withTx };
 export default router;

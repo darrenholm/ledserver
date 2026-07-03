@@ -1493,6 +1493,32 @@ export default function DeviceDetail() {
       )}
 
       <div className="card">
+        <h3 style={{ marginTop: 0 }}>Screen layout</h3>
+        <label className="row" style={{ gap: 8, fontSize: 14 }}>
+          <input
+            type="checkbox"
+            checked={device.dual_panel}
+            disabled={busy}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              action(async () => {
+                const updated = await devicesApi.update(device.id, { dualPanel: checked } as any);
+                setDevice(updated);
+              });
+            }}
+            style={{ width: 'auto' }}
+          />
+          <span><strong>Double-sided / side-by-side</strong> — duplicate each slide onto two halves</span>
+        </label>
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+          Turn this on for a screen whose controller drives two equal halves side by side (e.g. a
+          double-sided sign built from two 360×120 faces = one 720×120 canvas). Each slide is placed
+          on both halves, so a per-face image fills each face instead of being stretched across the
+          full width.
+        </div>
+      </div>
+
+      <div className="card">
         <div className="row between" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0 }}>Rental settings</h3>
           <label className="row" style={{ gap: 8, fontSize: 14 }}>

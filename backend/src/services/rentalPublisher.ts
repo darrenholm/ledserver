@@ -31,6 +31,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
     device_sn: string;
     device_name: string;
     ad_slot_seconds: number;
+    dual_panel: boolean;
     media_url: string | null;
     media_mime: string | null;
     media_size: string | null;     // bigint comes back as string
@@ -44,6 +45,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
             d.device_key AS device_sn,
             d.name AS device_name,
             d.ad_slot_seconds,
+            d.dual_panel,
             m.storage_url AS media_url,
             m.mime_type   AS media_mime,
             m.size_bytes  AS media_size,
@@ -100,6 +102,7 @@ export async function publishApprovedAdToVnnox(rentalId: string): Promise<void> 
       startTime: x.start_time,
       endTime: x.end_time,
       fitMode: x.fit_mode === 'cover' ? 'cover' : 'contain',
+      dualPanel: x.dual_panel,
     });
     await query(
       `UPDATE rentals

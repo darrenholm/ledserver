@@ -117,6 +117,8 @@ const updateSchema = z.object({
   brightnessDay: z.number().int().min(0).max(100).optional(),
   brightnessNight: z.number().int().min(0).max(100).optional(),
   brightnessOffsetMinutes: z.number().int().min(-120).max(120).optional(),
+  // Double-sided / side-by-side screen: duplicate each slide onto two halves.
+  dualPanel: z.boolean().optional(),
   // Rentals
   isRentable: z.boolean().optional(),
   dailyRate: z.number().min(0).nullable().optional(),
@@ -326,6 +328,7 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     brightness_day: 'brightnessDay',
     brightness_night: 'brightnessNight',
     brightness_offset_minutes: 'brightnessOffsetMinutes',
+    dual_panel: 'dualPanel',
     is_rentable: 'isRentable',
     daily_rate: 'dailyRate',
     weekly_rate: 'weeklyRate',

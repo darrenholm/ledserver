@@ -22,6 +22,7 @@ export interface Device {
   location: string | null;
   width_px: number | null;
   height_px: number | null;
+  dual_panel: boolean;
   last_seen_at: string | null;
   online: boolean;
   firmware: string | null;

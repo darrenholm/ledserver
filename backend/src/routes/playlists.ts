@@ -261,6 +261,7 @@ interface DeployRow {
   device_key: string;
   d_width_px: number | null;
   d_height_px: number | null;
+  dual_panel: boolean;
 }
 
 router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
@@ -287,7 +288,8 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
         d.port,
         d.device_key,
         d.width_px  AS d_width_px,
-        d.height_px AS d_height_px
+        d.height_px AS d_height_px,
+        d.dual_panel
      FROM playlists p
      JOIN playlist_items pi ON pi.playlist_id = p.id
      JOIN media m ON m.id = pi.media_id
@@ -341,6 +343,7 @@ router.post('/:id/deploy', requireOrgRole('org_admin', 'org_operator'), async (r
     loop: first.pl_loop,
     deviceWidthPx: first.d_width_px ?? undefined,
     deviceHeightPx: first.d_height_px ?? undefined,
+    dualPanel: first.dual_panel,
     items: rows.map((r) => {
       const vm = videoMeta.get(r.media_id);
       return {

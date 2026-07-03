@@ -8,6 +8,7 @@ import {
   PlaylistManifestItem,
 } from './types';
 import { vnnoxBaseUrl, vnnoxFetch } from './vnnoxSign';
+import { panelWidgets } from '../services/dualPanel';
 
 type VnnoxMediaWidgetType = 'PICTURE' | 'GIF' | 'VIDEO';
 
@@ -324,10 +325,13 @@ export class VnnoxCloudClient implements CoexTransport {
     // which matches the playlist.loop=true contract; we treat loop=false as
     // a single pass by setting repeatCount=1 (default) — VNNOX still cycles
     // through pages, so true no-loop isn't achievable without a schedule.
-    const pages = manifest.items.map((item, i) => ({
-      name: `page-${i + 1}`,
-      widgets: [buildMediaWidget(item)],
-    }));
+    const pages = manifest.items.map((item, i) => {
+      const w = buildMediaWidget(item);
+      return {
+        name: `page-${i + 1}`,
+        widgets: manifest.dualPanel ? panelWidgets(w) : [w],
+      };
+    });
 
     // /v2/player/program/normal both creates the program and publishes it to
     // the target players in a single call. Response: { success: [...], fail: [...] }.

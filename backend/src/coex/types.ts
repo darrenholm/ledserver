@@ -50,6 +50,8 @@ export interface PlaylistManifest {
   /** Target device dimensions, used to build a full-screen layout for cloud providers like VNNOX. */
   deviceWidthPx?: number;
   deviceHeightPx?: number;
+  /** Double-sided / side-by-side screen: duplicate each slide onto two halves. */
+  dualPanel?: boolean;
 }
 
 /**

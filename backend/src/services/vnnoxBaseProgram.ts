@@ -13,6 +13,7 @@ import { config } from '../config';
 import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
 import { probeVideoFromUrl } from './videoProbe';
+import { panelWidgets } from './dualPanel';
 
 type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
@@ -97,8 +98,9 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
     weather_page_enabled: boolean;
     weather_page_duration_ms: number;
     weather_page_location: string | null;
+    dual_panel: boolean;
   }>(
-    `SELECT device_key AS sn, provider, base_playlist_id,
+    `SELECT device_key AS sn, provider, base_playlist_id, dual_panel,
             overlay_clock_enabled, overlay_clock_position, overlay_clock_format,
             overlay_weather_enabled, overlay_weather_position, overlay_weather_location,
             overlay_weather_units,
@@ -156,7 +158,10 @@ export async function republishBaseProgram(deviceId: string): Promise<{ programI
           if (meta.byteRateKbps) widget.byteRate = String(meta.byteRateKbps);
         }
       }
-      pages.push({ name: `base-page-${i + 1}`, widgets: [widget] });
+      pages.push({
+        name: `base-page-${i + 1}`,
+        widgets: d.dual_panel ? panelWidgets(widget) : [widget],
+      });
     }
   }
   if (pages.length === 0) {

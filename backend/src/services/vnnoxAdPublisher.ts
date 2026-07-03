@@ -16,6 +16,7 @@ import { config } from '../config';
 import { vnnoxBaseUrl, vnnoxFetch } from '../coex/vnnoxSign';
 import { CoexError } from '../coex/types';
 import { probeVideoFromUrl } from './videoProbe';
+import { panelWidgets } from './dualPanel';
 
 export interface PublishAdArgs {
   /** Device serial number (VNNOX `sn`). */
@@ -42,6 +43,8 @@ export interface PublishAdArgs {
    * Maps to NovaStar's widget scaling mode in the publish payload.
    */
   fitMode?: 'contain' | 'cover';
+  /** Double-sided / side-by-side screen: duplicate the ad onto both halves. */
+  dualPanel?: boolean;
 }
 
 export interface PublishAdResult {
@@ -155,8 +158,8 @@ export async function publishAd(args: PublishAdArgs): Promise<PublishAdResult> {
     playerIds: [playerId],
     // VNNOX uses "name" as the human-visible program label in their UI.
     name: args.name.slice(0, 64),
-    // Each insertion program is one full-screen page with one widget.
-    pages: [{ name: 'page-1', widgets: [widget] }],
+    // One full-screen page; dual-panel screens get the ad on both halves.
+    pages: [{ name: 'page-1', widgets: args.dualPanel ? panelWidgets(widget) : [widget] }],
     schedule,
   };
 

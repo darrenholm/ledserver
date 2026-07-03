@@ -10,6 +10,7 @@ import { authRequired, requireOrgRole } from '../middleware/auth';
 import { orgClause, orgForInsert } from '../services/scope';
 import { config } from '../config';
 import { buildTextSlideSvg, textSlideSchema } from '../services/textSlide';
+import { ensureTaurusSafeVideo } from '../services/videoTranscode';
 
 const router = Router();
 router.use(authRequired);
@@ -213,6 +214,12 @@ router.post('/', requireOrgRole('org_admin', 'org_operator'), upload.single('fil
   if (!req.file) {
     res.status(400).json({ error: 'no file uploaded' });
     return;
+  }
+  // Auto-normalize videos to a Taurus-decodable encoding on the way in, so
+  // clients never have to think about codecs/profiles/frame rate. Hashing +
+  // sizing below then operate on the normalized file.
+  if (req.file.mimetype.startsWith('video/')) {
+    await ensureTaurusSafeVideo(req.file);
   }
   const orgId = await orgForInsert(req);
   const { sha256, md5 } = await hashFile(req.file.path);

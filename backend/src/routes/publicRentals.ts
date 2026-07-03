@@ -22,6 +22,7 @@ import { publishApprovedAdToVnnox } from '../services/rentalPublisher';
 import { mirrorRentalArtwork } from '../services/artworkMirror';
 import { republishBaseProgram } from '../services/vnnoxBaseProgram';
 import { buildTextSlideSvg, textSlideSchema } from '../services/textSlide';
+import { ensureTaurusSafeVideo } from '../services/videoTranscode';
 
 /**
  * Public (no-auth) routes for the ad-rental marketplace.
@@ -466,6 +467,13 @@ router.post('/rentals/:id/artwork', optionalAdvertiser, upload.single('file'), a
     fs.promises.unlink(req.file.path).catch(() => undefined);
     res.status(decision.status).json({ error: decision.reason });
     return;
+  }
+
+  // Normalize video ads to a Taurus-decodable encoding before we record or
+  // publish them, same as the admin media library. Advertisers upload straight
+  // from their phones, so this is where most non-playable files come from.
+  if (req.file.mimetype.startsWith('video/')) {
+    await ensureTaurusSafeVideo(req.file);
   }
 
   const probe = await probeArtwork(req.file.path, {

@@ -96,6 +96,10 @@ export const devices = {
   setBrightness: (id: string, brightness: number) =>
     api<{ ok: boolean }>(`/devices/${id}/brightness`, { body: { brightness } }),
   reboot: (id: string) => api<{ ok: boolean }>(`/devices/${id}/reboot`, { method: 'POST' }),
+  /** Ask the player to capture its current screen. Image arrives async — poll getScreenshot. */
+  screenshot: (id: string) => api<{ ok: boolean; requestedAt: string }>(`/devices/${id}/screenshot`, { method: 'POST' }),
+  /** Latest delivered screenshot for a device (url null until one arrives). */
+  getScreenshot: (id: string) => api<{ url: string | null; at: string | null }>(`/devices/${id}/screenshot`),
   stop: (id: string) => api<{ ok: boolean }>(`/devices/${id}/stop`, { method: 'POST' }),
   /** Re-publish the device's base program (base playlist + overlay widgets). */
   republishBase: (id: string) => api<{ ok: boolean }>(`/devices/${id}/republish-base`, { body: {} }),

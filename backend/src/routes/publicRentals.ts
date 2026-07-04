@@ -1341,5 +1341,35 @@ router.post('/my-devices/:id/slides/upload', requireAdvertiser, upload.single('f
   });
 });
 
+// ---------------------------------------------------------------------------
+// VNNOX screenshot callback (no auth — NovaStar's servers POST here)
+// ---------------------------------------------------------------------------
+//
+// NovaStar's screen-capture is async: routes/devices.ts POST /:id/screenshot
+// asks VNNOX to capture and gives it this noticeUrl with ?d=deviceId&n=nonce.
+// VNNOX POSTs { playerId, playerTime, screenShotUrl } here when the image is
+// ready. We match the nonce (so a forged/stale callback can't overwrite) and
+// stash the image URL on the device for the UI to poll. Always answer 200
+// quickly — VNNOX requires the callback to respond within 3s.
+router.post('/vnnox-screenshot', async (req, res) => {
+  try {
+    const deviceId = String(req.query.d || '');
+    const nonce = String(req.query.n || '');
+    const url = (req.body as { screenShotUrl?: string })?.screenShotUrl;
+    if (deviceId && nonce && url) {
+      await query(
+        `UPDATE devices
+            SET last_screenshot_url = $1, last_screenshot_at = NOW(), screenshot_nonce = NULL
+          WHERE id = $2 AND screenshot_nonce = $3`,
+        [url, deviceId, nonce],
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[vnnox-screenshot] callback failed:', (err as Error).message);
+  }
+  res.status(200).json({ ok: true });
+});
+
 export { withTx };
 export default router;

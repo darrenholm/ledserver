@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { query } from '../db';
+import { config } from '../config';
 import { authRequired, requireOrgRole } from '../middleware/auth';
 import { coexRegistry, DeviceConnInfo, DeviceProvider } from '../coex/registry';
 import { writeLog } from '../services/logs';
 import { orgClause, orgForInsert } from '../services/scope';
 import { republishBaseProgram } from '../services/vnnoxBaseProgram';
+import { requestScreenshot } from '../services/vnnoxScreenshot';
 
 const router = Router();
 router.use(authRequired);
@@ -601,6 +604,49 @@ router.post('/:id/reboot', requireOrgRole('org_admin'), async (req, res) => {
   await client.reboot();
   await writeLog('warn', 'api', `device reboot triggered`, device.id, undefined, device.organization_id);
   res.json({ ok: true });
+});
+
+/**
+ * Trigger a remote screenshot of what the player is currently showing. NovaStar
+ * delivers the image asynchronously to the noticeUrl callback
+ * (POST /api/public/vnnox-screenshot), which stores it on the device row. The
+ * UI polls GET /:id/screenshot for the result. A nonce ties this request to its
+ * callback so a stale/forged callback can't overwrite the stored image.
+ */
+router.post('/:id/screenshot', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
+  if (!device) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (device.provider !== 'vnnox') {
+    res.status(400).json({ error: `screenshots require a vnnox device (this is "${device.provider}")` });
+    return;
+  }
+  const nonce = crypto.randomBytes(16).toString('hex');
+  await query(`UPDATE devices SET screenshot_nonce = $1 WHERE id = $2`, [nonce, device.id]);
+  const noticeUrl = `${config.publicBaseUrl}/api/public/vnnox-screenshot?d=${device.id}&n=${nonce}`;
+  try {
+    await requestScreenshot(device.device_key, noticeUrl);
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+    return;
+  }
+  res.json({ ok: true, requestedAt: new Date().toISOString() });
+});
+
+/** Latest screenshot delivered for this device (null until a capture arrives). */
+router.get('/:id/screenshot', requireOrgRole('org_admin', 'org_operator'), async (req, res) => {
+  const device = await loadDevice(req);
+  if (!device) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const { rows } = await query<{ last_screenshot_url: string | null; last_screenshot_at: string | null }>(
+    `SELECT last_screenshot_url, last_screenshot_at FROM devices WHERE id = $1`,
+    [device.id],
+  );
+  res.json({ url: rows[0]?.last_screenshot_url ?? null, at: rows[0]?.last_screenshot_at ?? null });
 });
 
 /**

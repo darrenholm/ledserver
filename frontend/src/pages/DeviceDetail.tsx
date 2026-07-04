@@ -654,6 +654,11 @@ export default function DeviceDetail() {
   // Ad schedule (every rental on this device, sorted chronologically).
   const [schedule, setSchedule] = useState<AdminRental[]>([]);
   const [contractById, setContractById] = useState<Record<string, AdContract>>({});
+  // Remote screenshot ("what's on screen")
+  const [shotUrl, setShotUrl] = useState<string | null>(null);
+  const [shotAt, setShotAt] = useState<string | null>(null);
+  const [shotBusy, setShotBusy] = useState(false);
+  const [shotErr, setShotErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -678,6 +683,14 @@ export default function DeviceDetail() {
     // Every rental on this device for the schedule timeline. Pull a
     // generous limit so we can show past + upcoming in one view.
     rentalsApi.list({ deviceId: id, limit: 500 }).then(setSchedule).catch(() => undefined);
+    // Last delivered screenshot, if any (best-effort).
+    devicesApi
+      .getScreenshot(id)
+      .then((s) => {
+        setShotUrl(s.url);
+        setShotAt(s.at);
+      })
+      .catch(() => undefined);
   }, [id]);
 
   // Build a contract_id → AdContract lookup so the schedule rows can
@@ -789,6 +802,34 @@ export default function DeviceDetail() {
       setErr((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Trigger a remote screenshot, then poll for the async result. NovaStar
+  // delivers the image to our callback; we watch for last_screenshot_at to
+  // advance past the value we had before requesting.
+  const captureScreenshot = async () => {
+    if (!device) return;
+    setShotBusy(true);
+    setShotErr(null);
+    const before = shotAt;
+    try {
+      await devicesApi.screenshot(device.id);
+      const deadline = Date.now() + 40000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const s = await devicesApi.getScreenshot(device.id);
+        if (s.url && s.at && s.at !== before) {
+          setShotUrl(s.url);
+          setShotAt(s.at);
+          return;
+        }
+      }
+      setShotErr('The sign didn’t return a screenshot in time — it may be offline. Try again.');
+    } catch (e) {
+      setShotErr((e as Error).message);
+    } finally {
+      setShotBusy(false);
     }
   };
 
@@ -1491,6 +1532,45 @@ export default function DeviceDetail() {
           }}
         />
       )}
+
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>What’s on screen</h3>
+          <button disabled={shotBusy} onClick={captureScreenshot}>
+            {shotBusy ? 'Capturing…' : 'See what’s on screen'}
+          </button>
+        </div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Grabs a live screenshot from the player so you can confirm what it’s actually showing —
+          handy when the sign is far away.
+        </div>
+        {shotErr && (
+          <div style={{ color: 'var(--danger, #c0392b)', fontSize: 13, marginBottom: 12 }}>{shotErr}</div>
+        )}
+        {shotBusy && (
+          <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Asking the player for a screenshot… this can take 10–30 seconds.
+          </div>
+        )}
+        {shotUrl ? (
+          <div>
+            <img
+              src={shotUrl}
+              alt="Current screen"
+              style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid var(--border)', display: 'block' }}
+            />
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              Captured {shotAt ? new Date(shotAt).toLocaleString() : ''}
+            </div>
+          </div>
+        ) : (
+          !shotBusy && (
+            <div className="muted" style={{ fontSize: 13 }}>
+              No screenshot yet — click the button to grab one.
+            </div>
+          )
+        )}
+      </div>
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Screen layout</h3>

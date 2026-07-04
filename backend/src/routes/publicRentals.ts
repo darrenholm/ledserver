@@ -1357,12 +1357,17 @@ router.post('/vnnox-screenshot', async (req, res) => {
     const nonce = String(req.query.n || '');
     const url = (req.body as { screenShotUrl?: string })?.screenShotUrl;
     if (deviceId && nonce && url) {
-      await query(
+      const { rowCount } = await query(
         `UPDATE devices
             SET last_screenshot_url = $1, last_screenshot_at = NOW(), screenshot_nonce = NULL
           WHERE id = $2 AND screenshot_nonce = $3`,
         [url, deviceId, nonce],
       );
+      // eslint-disable-next-line no-console
+      console.log(`[vnnox-screenshot] callback d=${deviceId} matched=${rowCount} url=${url.slice(0, 60)}…`);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[vnnox-screenshot] callback missing fields: d=${!!deviceId} n=${!!nonce} url=${!!url}`);
     }
   } catch (err) {
     // eslint-disable-next-line no-console

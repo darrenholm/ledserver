@@ -629,9 +629,14 @@ router.post('/:id/screenshot', requireOrgRole('org_admin', 'org_operator'), asyn
   try {
     await requestScreenshot(device.device_key, noticeUrl);
   } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[screenshot] capture request failed for ${device.name} (${device.id}):`, (err as Error).message);
     res.status(502).json({ error: (err as Error).message });
     return;
   }
+  // eslint-disable-next-line no-console
+  console.log(`[screenshot] capture requested for ${device.name} (${device.id}); awaiting VNNOX callback`);
+  await writeLog('info', 'api', 'screenshot requested', device.id, undefined, device.organization_id);
   res.json({ ok: true, requestedAt: new Date().toISOString() });
 });
 

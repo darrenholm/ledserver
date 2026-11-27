@@ -68,6 +68,8 @@ export interface CoexTransport {
   pushPlaylist(manifest: PlaylistManifest): Promise<void>;
   play(playlistId: string): Promise<void>;
   stop(): Promise<void>;
+  /** Turn the panel output on (true) or off/black (false). */
+  setScreenPower(on: boolean): Promise<void>;
   reboot(): Promise<void>;
   close(): Promise<void>;
 }

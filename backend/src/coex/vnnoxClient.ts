@@ -356,11 +356,15 @@ export class VnnoxCloudClient implements CoexTransport {
 
   async stop(): Promise<void> {
     // Documented as the "screen-status" endpoint (CLOSE = black screen).
+    await this.setScreenPower(false);
+  }
+
+  async setScreenPower(on: boolean): Promise<void> {
     const playerId = await this.resolvePlayerId();
     await this.request<BatchResult>(
       'POST',
       '/v2/player/real-time-control/screen-status',
-      { playerIds: [playerId], status: 'CLOSE' },
+      { playerIds: [playerId], status: on ? 'OPEN' : 'CLOSE' },
     );
   }
 

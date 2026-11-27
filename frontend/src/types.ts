@@ -36,6 +36,13 @@ export interface Device {
   brightness_offset_minutes: number;
   last_applied_brightness: number | null;
   last_applied_at: string | null;
+  // Off hours (daily screen off window, local time)
+  screen_off_enabled: boolean;
+  screen_off_start: string | null; // "HH:MM:SS"
+  screen_off_end: string | null;
+  screen_off_tz: string;
+  last_screen_power: 'OPEN' | 'CLOSE' | null;
+  last_screen_power_at: string | null;
   // Rentals
   is_rentable: boolean;
   daily_rate: string | null;

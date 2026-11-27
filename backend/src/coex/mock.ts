@@ -85,6 +85,11 @@ export class MockCoexController implements CoexTransport {
     this.state.currentPlaylistId = undefined;
   }
 
+  async setScreenPower(on: boolean): Promise<void> {
+    this.maybeFail();
+    (this.state as any).screenOn = on;
+  }
+
   async reboot(): Promise<void> {
     this.maybeFail();
     this.state.rebootCount += 1;

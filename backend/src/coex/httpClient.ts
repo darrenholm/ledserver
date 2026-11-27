@@ -108,6 +108,10 @@ export class HttpCoexClient implements CoexTransport {
     await this.request<void>('POST', '/api/v1/playlist/stop');
   }
 
+  async setScreenPower(on: boolean): Promise<void> {
+    await this.request<void>('POST', `/api/v1/device/screen/${on ? 'on' : 'off'}`);
+  }
+
   async reboot(): Promise<void> {
     await this.request<void>('POST', '/api/v1/device/reboot');
   }

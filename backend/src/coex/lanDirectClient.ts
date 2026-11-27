@@ -87,6 +87,10 @@ export class LanDirectClient implements CoexTransport {
     throw new CoexError('lan_direct.stop not implemented', 'PROTOCOL');
   }
 
+  async setScreenPower(_on: boolean): Promise<void> {
+    throw new CoexError('lan_direct.setScreenPower not implemented', 'PROTOCOL');
+  }
+
   async reboot(): Promise<void> {
     throw new CoexError('lan_direct.reboot not implemented', 'PROTOCOL');
   }

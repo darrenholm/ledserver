@@ -109,6 +109,7 @@ const updateSchema = z.object({
   ipAddress: z.string().min(1).optional(),
   port: z.number().int().min(1).max(65535).optional(),
   model: z.string().optional(),
+  firmware: z.string().nullable().optional(),
   location: z.string().optional(),
   widthPx: z.number().int().positive().optional(),
   heightPx: z.number().int().positive().optional(),
@@ -120,6 +121,10 @@ const updateSchema = z.object({
   brightnessDay: z.number().int().min(0).max(100).optional(),
   brightnessNight: z.number().int().min(0).max(100).optional(),
   brightnessOffsetMinutes: z.number().int().min(-120).max(120).optional(),
+  // Off hours (daily screen off window, local time)
+  screenOffEnabled: z.boolean().optional(),
+  screenOffStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
+  screenOffEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   // Double-sided / side-by-side screen: duplicate each slide onto two halves.
   dualPanel: z.boolean().optional(),
   // Rentals
@@ -318,6 +323,7 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     name: 'name',
     provider: 'provider',
     model: 'model',
+    firmware: 'firmware',
     device_key: 'deviceKey',
     ip_address: 'ipAddress',
     port: 'port',
@@ -331,6 +337,9 @@ router.patch('/:id', requireOrgRole('org_admin', 'org_operator'), async (req, re
     brightness_day: 'brightnessDay',
     brightness_night: 'brightnessNight',
     brightness_offset_minutes: 'brightnessOffsetMinutes',
+    screen_off_enabled: 'screenOffEnabled',
+    screen_off_start: 'screenOffStart',
+    screen_off_end: 'screenOffEnd',
     dual_panel: 'dualPanel',
     is_rentable: 'isRentable',
     daily_rate: 'dailyRate',
@@ -423,7 +432,7 @@ router.post('/:id/ping', requireOrgRole('org_admin', 'org_operator'), async (req
   const client = coexRegistry.get(connInfoFor(device));
   const info = await client.handshake();
   await query(
-    `UPDATE devices SET online = TRUE, last_seen_at = NOW(), firmware = COALESCE($2, firmware), updated_at = NOW() WHERE id = $1`,
+    `UPDATE devices SET online = TRUE, last_seen_at = NOW(), firmware = COALESCE(NULLIF($2, 'unknown'), firmware), updated_at = NOW() WHERE id = $1`,
     [device.id, info.firmware],
   );
   res.json({ ok: true, info });

@@ -4,6 +4,7 @@ import { CoexError } from '../coex/types';
 import { isDayBrightness, sunEventsFor } from './sun';
 import { writeLog } from './logs';
 import { getCloudCoverPct } from './cloudCoverClient';
+import { isInOffWindow, tick as screenPowerTick } from './screenPowerScheduler';
 
 interface SchedulableDevice {
   id: string;
@@ -21,6 +22,10 @@ interface SchedulableDevice {
   last_applied_at: string | null;
   dim_on_overcast_enabled: boolean;
   dim_max_pct: number;
+  screen_off_enabled: boolean;
+  screen_off_start: string | null;
+  screen_off_end: string | null;
+  screen_off_tz: string;
 }
 
 const TICK_INTERVAL_MS = 60 * 1000; // 1 minute
@@ -35,11 +40,22 @@ const TICK_INTERVAL_MS = 60 * 1000; // 1 minute
  * scheduler will start succeeding without any code change.
  */
 export async function tick(now: Date = new Date()): Promise<void> {
+  // Off hours first, so brightness never runs against a screen that is
+  // about to be closed.
+  try {
+    await screenPowerTick(now);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[scheduler] off-hours tick failed:', e);
+  }
+
   const { rows } = await query<SchedulableDevice>(
     `SELECT id, organization_id, provider, device_key, ip_address, port,
             latitude, longitude, brightness_day, brightness_night,
             brightness_offset_minutes, last_applied_brightness, last_applied_at,
-            dim_on_overcast_enabled, dim_max_pct
+            dim_on_overcast_enabled, dim_max_pct,
+            screen_off_enabled, screen_off_start::text AS screen_off_start,
+            screen_off_end::text AS screen_off_end, screen_off_tz
        FROM devices
       WHERE auto_brightness_enabled = TRUE
         AND latitude IS NOT NULL
@@ -47,6 +63,8 @@ export async function tick(now: Date = new Date()): Promise<void> {
   );
 
   for (const d of rows) {
+    // Screen is off for the night — don't touch brightness.
+    if (isInOffWindow(d, now)) continue;
     try {
       const lat = parseFloat(d.latitude as string);
       const lng = parseFloat(d.longitude as string);

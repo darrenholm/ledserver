@@ -141,6 +141,20 @@ function deviceToBrightnessForm(d: Device): BrightnessFormState {
   };
 }
 
+interface OffHoursFormState {
+  enabled: boolean;
+  start: string; // "HH:MM"
+  end: string;
+}
+
+function deviceToOffForm(d: Device): OffHoursFormState {
+  return {
+    enabled: d.screen_off_enabled ?? false,
+    start: (d.screen_off_start ?? '').slice(0, 5),
+    end: (d.screen_off_end ?? '').slice(0, 5),
+  };
+}
+
 function formatTime(d: Date | null): string {
   if (!d || isNaN(d.getTime())) return '—';
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -633,6 +647,7 @@ export default function DeviceDetail() {
   const [busy, setBusy] = useState(false);
   const [brightness, setBrightness] = useState(80);
   const [bForm, setBForm] = useState<BrightnessFormState | null>(null);
+  const [offForm, setOffForm] = useState<OffHoursFormState>({ enabled: false, start: '', end: '' });
   const [rForm, setRForm] = useState<RentalFormState | null>(null);
   const [dForm, setDForm] = useState<DetailsFormState | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
@@ -667,6 +682,7 @@ export default function DeviceDetail() {
       .then((d) => {
         setDevice(d);
         setBForm(deviceToBrightnessForm(d));
+        setOffForm(deviceToOffForm(d));
         setRForm(deviceToRentalForm(d));
         setDForm(deviceToDetailsForm(d));
         setMForm(deviceToMarketingForm(d));
@@ -831,6 +847,26 @@ export default function DeviceDetail() {
     } finally {
       setShotBusy(false);
     }
+  };
+
+  const saveOffHours = async () => {
+    if (offForm.enabled && (!offForm.start || !offForm.end)) {
+      setErr('Off time and on time are required when off hours are enabled.');
+      return;
+    }
+    if (offForm.enabled && offForm.start === offForm.end) {
+      setErr('Off time and on time must be different.');
+      return;
+    }
+    await action(async () => {
+      const updated = await devicesApi.update(device.id, {
+        screenOffEnabled: offForm.enabled,
+        screenOffStart: offForm.start || null,
+        screenOffEnd: offForm.end || null,
+      } as any);
+      setDevice(updated);
+      setOffForm(deviceToOffForm(updated));
+    });
   };
 
   const saveBrightnessForm = async () => {
@@ -1031,7 +1067,7 @@ export default function DeviceDetail() {
             disabled={busy}
             onClick={() => action(async () => {
               const r = await devicesApi.ping(device.id);
-              setDevice({ ...device, online: true, firmware: (r.info as any).firmware ?? device.firmware });
+              setDevice({ ...device, online: true, firmware: (r.info as any).firmware && (r.info as any).firmware !== 'unknown' ? (r.info as any).firmware : device.firmware });
             })}
           >
             Ping
@@ -1261,6 +1297,46 @@ export default function DeviceDetail() {
         <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
           <button disabled={busy} onClick={saveBrightnessForm}>
             Save automation
+          </button>
+        </div>
+      </div>
+
+      {/* --- Off hours card ---------------------------------------------- */}
+      <div className="card">
+        <div className="row between" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Off hours</h3>
+          <label className="row" style={{ gap: 8, fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={offForm.enabled}
+              onChange={(e) => setOffForm({ ...offForm, enabled: e.target.checked })}
+              style={{ width: 'auto' }}
+            />
+            <span>Enabled</span>
+          </label>
+        </div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+          Turns the screen off every day between these times ({device.screen_off_tz ?? 'America/Toronto'}).
+          Can cross midnight, e.g. off 23:30, on 06:00. Brightness automation pauses while the screen is off.
+        </div>
+        <div className="row" style={{ gap: 12 }}>
+          <label style={{ flex: 1 }}>
+            Off time
+            <input type="time" value={offForm.start} onChange={(e) => setOffForm({ ...offForm, start: e.target.value })} />
+          </label>
+          <label style={{ flex: 1 }}>
+            On time
+            <input type="time" value={offForm.end} onChange={(e) => setOffForm({ ...offForm, end: e.target.value })} />
+          </label>
+        </div>
+        {device.last_screen_power_at && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+            Last sent: screen {device.last_screen_power === 'CLOSE' ? 'off' : 'on'} at {new Date(device.last_screen_power_at).toLocaleString()}
+          </div>
+        )}
+        <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+          <button disabled={busy} onClick={saveOffHours}>
+            Save off hours
           </button>
         </div>
       </div>
